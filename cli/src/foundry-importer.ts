@@ -10,15 +10,16 @@
 
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLI_VERSION } from "./version.js";
 
-// Sibling of this compiled file in dist/, produced by scripts/bundle-importer.mjs.
-const BUNDLE_PATH = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "foundry-importer.bundle.js",
-);
+// scripts/bundle-importer.mjs always emits the bundle into dist/. This module
+// runs from dist/ once published, but from src/ under tsx (tests) — resolve to
+// dist/ either way.
+const here = dirname(fileURLToPath(import.meta.url));
+const distDir = basename(here) === "src" ? join(here, "..", "dist") : here;
+const BUNDLE_PATH = join(distDir, "foundry-importer.bundle.js");
 
 /**
  * Write `_foundry/importer.js` + `_foundry/version.json` into the deploy.
