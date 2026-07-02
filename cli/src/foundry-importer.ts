@@ -1,61 +1,24 @@
-// Build helper: bundle the Foundry-side importer scripts into a single
-// ESM file plus a sidecar version manifest. The bundle is served by
-// every deploy at `_foundry/importer.js` and `_foundry/version.json`.
+// Build helper: the Foundry-side importer is pre-bundled at CLI build time
+// (see scripts/bundle-importer.mjs) into `dist/foundry-importer.bundle.js`,
+// which ships inside the npm package. At deploy time we copy that bundle to
+// `_foundry/importer.js` and emit a `_foundry/version.json` sidecar carrying
+// `{ version, sha256 }` so the Foundry host can detect skew before evaluating.
 //
-// The Foundry module fetches the bundle, hash-checks against its
-// trust cache, evaluates it, and calls runSync / runRemove against a
-// host it constructs. The version manifest carries `{ version, sha256 }`
-// so the host can detect skew before evaluating.
+// Bundling ahead of publish (not here) means the installed CLI never runs
+// esbuild on the user's machine and doesn't need the foundry/ source tree,
+// which isn't part of the npm package.
 
-import { build } from "esbuild";
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLI_VERSION } from "./version.js";
 
-const ENTRY_RELATIVE_TO_REPO = "foundry/scripts/importer-entry.mjs";
-
-interface BuildResult {
-  /** Bundled ESM source as a UTF-8 string. */
-  source: string;
-  /** SHA-256 of `source`, hex-encoded. */
-  sha256: string;
-}
-
-/** Locate the Foundry-side entry point. The CLI is published from `cli/`
- *  but runs against the monorepo checkout during dev / `vaults build` —
- *  walk up from this file until we find the foundry/ sibling. */
-function resolveEntry(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  // dev: cli/src/ → cli → vaults/ → vaults/foundry/scripts/importer-entry.mjs
-  // installed: dist/ → cli → vaults/ → vaults/foundry/scripts/importer-entry.mjs (same)
-  return resolve(here, "..", "..", ENTRY_RELATIVE_TO_REPO);
-}
-
-async function bundleImporter(): Promise<BuildResult> {
-  const entry = resolveEntry();
-  const result = await build({
-    entryPoints: [entry],
-    bundle: true,
-    format: "esm",
-    platform: "browser",
-    target: "es2022",
-    write: false,
-    // Foundry globals are present at runtime; esbuild treats them as
-    // externals automatically because they're not imported. No need to
-    // mark anything as external explicitly.
-    minify: false,
-    sourcemap: false,
-    legalComments: "none",
-  });
-  if (result.outputFiles.length !== 1) {
-    throw new Error(`expected 1 bundle output, got ${result.outputFiles.length}`);
-  }
-  const source = result.outputFiles[0]!.text;
-  const sha256 = createHash("sha256").update(source).digest("hex");
-  return { source, sha256 };
-}
+// Sibling of this compiled file in dist/, produced by scripts/bundle-importer.mjs.
+const BUNDLE_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "foundry-importer.bundle.js",
+);
 
 /**
  * Write `_foundry/importer.js` + `_foundry/version.json` into the deploy.
@@ -64,7 +27,8 @@ async function bundleImporter(): Promise<BuildResult> {
  * no role-gated content.
  */
 export async function writeFoundryImporter(outputDir: string): Promise<void> {
-  const { source, sha256 } = await bundleImporter();
+  const source = await readFile(BUNDLE_PATH, "utf8");
+  const sha256 = createHash("sha256").update(source).digest("hex");
   const dir = join(outputDir, "_foundry");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "importer.js"), source);
