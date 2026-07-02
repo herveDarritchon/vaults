@@ -22,7 +22,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildSite } from "../src/build.js";
@@ -132,6 +132,29 @@ describe("![[file]] embeds: images", () => {
         "relative author URL must be rewritten to the absolute slugified path");
       assert.doesNotMatch(html, /\.\.\//,
         "relative path segments must not survive into the rendered HTML");
+    } finally { await cleanup(v); }
+  });
+
+  // Rewriting the <img src> (the test above) is only half the job — the
+  // referenced file must also ship. Staging previously scanned only
+  // ![[embed]] syntax, so CommonMark ![alt](path) images rendered a correct
+  // src that 404'd on deploy. Two images here: only the first body image
+  // becomes the auto cover (staged via that path regardless), so the
+  // load-bearing assertion is that the *second* image ships too.
+  it("stages standard-Markdown ![alt](path) images into the deploy", async () => {
+    const v = await setupVault({
+      ".vaultrc.json": VAULTRC_1,
+      "attachments/first.webp": PLACEHOLDER,
+      "attachments/second.webp": PLACEHOLDER,
+      "Notes/Page.md":
+        "# Page\n\n![First](../attachments/first.webp)\n\n![Second](../attachments/second.webp)\n",
+    });
+    try {
+      await build(v);
+      const shipped = (name: string) =>
+        stat(join(v.out, "attachments", name)).then(() => true, () => false);
+      assert.equal(await shipped("second.webp"), true,
+        "a non-cover markdown-referenced image must ship to the deploy");
     } finally { await cleanup(v); }
   });
 

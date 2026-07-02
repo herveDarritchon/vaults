@@ -977,6 +977,17 @@ async function copyReferencedImages(
       const image = imageIndex.get(slugify(name.split("/").pop()!));
       if (image) refs.add(image.outputPath);
     }
+    // Standard-Markdown image refs, `![alt](path/to/img.png)`. Without this
+    // only Obsidian `![[embed]]` syntax staged images, so CommonMark-syntax
+    // images rendered into HTML but 404'd on deploy. Mirrors the same MD_LINK_RE
+    // pass copyReferencedPassthroughs runs for `[label](file.pdf)` links.
+    for (const m of source.matchAll(MD_LINK_RE)) {
+      const name = m[1]!.trim();
+      if (/^(https?:|mailto:|#)/i.test(name)) continue;
+      if (!IMAGE_EXT_RE.test(name)) continue;
+      const image = imageIndex.get(slugify(name.split("/").pop()!));
+      if (image) refs.add(image.outputPath);
+    }
   }
   // Pages can name their cover via `image:` frontmatter alone (no body embed);
   // pull those in too. coverImage was resolved to the served URL upstream, so
