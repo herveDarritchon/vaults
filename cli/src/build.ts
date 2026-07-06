@@ -1223,9 +1223,12 @@ function generateFolderIndexes(
         .join("\n");
       // Filter to direct children of this folder, excluding the auto-
       // generated index page itself. JSON-encode the folder so a name
-      // with quotes/special chars survives.
-      const folderLiteral = JSON.stringify(folder);
-      const filtersBlock = `filters:\n  and:\n    - 'file.folder == ${folderLiteral}'\n    - 'file.name != "index"'`;
+      // with quotes/special chars survives inside the filter expression,
+      // then YAML-single-quote the whole expression so a folder name with
+      // an apostrophe (e.g. "Seylon's Secrets") doesn't terminate the
+      // scalar and break `yaml.load`.
+      const folderExpr = yamlSingleQuote(`file.folder == ${JSON.stringify(folder)}`);
+      const filtersBlock = `filters:\n  and:\n    - ${folderExpr}\n    - 'file.name != "index"'`;
       const propsBlock = propsYaml ? `properties:\n${propsYaml}\n` : "";
       sections.push(`## Pages\n\n\`\`\`base\n${filtersBlock}\n${propsBlock}views:\n  - type: table\n    name: Contents\n    order:\n${orderYaml}\n\`\`\``);
     }
@@ -1245,6 +1248,11 @@ function generateFolderIndexes(
     });
   }
   return out;
+}
+
+/** Wrap a string as a YAML single-quoted scalar, doubling any literal quote. */
+function yamlSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`;
 }
 
 /** YAML-quote a string only when needed (special chars or ambiguous flow). */
