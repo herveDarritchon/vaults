@@ -3,6 +3,7 @@
 # same version, tags the monorepo, then runs each subproject's release pipeline.
 #
 # Usage:
+#   ./release.sh                         # interactive: pick major/minor/patch bump
 #   ./release.sh 1.1.0
 #   ./release.sh 1.1.0 --skip-cli        # skip cli npm publish
 #   ./release.sh 1.1.0 --skip-foundry    # skip Foundry release.sh
@@ -16,17 +17,9 @@
 
 set -e
 
-NEW_VERSION="$1"
-shift || true
-if [[ -z "$NEW_VERSION" ]]; then
-  echo "Usage: $0 <version> [--skip-cli] [--skip-foundry] [--skip-compiler]"
-  exit 1
-fi
-if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
-  echo "Error: version must be semver (e.g. 1.0.0 or 1.0.0-rc.1), got: $NEW_VERSION"
-  exit 1
-fi
-
+# Separate an optional version argument from --skip flags so the version can be
+# omitted (interactive menu) or given in any position.
+NEW_VERSION=""
 SKIP_CLI=0
 SKIP_FOUNDRY=0
 SKIP_COMPILER=0
@@ -35,17 +28,18 @@ for arg in "$@"; do
     --skip-cli)      SKIP_CLI=1 ;;
     --skip-foundry)  SKIP_FOUNDRY=1 ;;
     --skip-compiler) SKIP_COMPILER=1 ;;
-    *) echo "Unknown flag: $arg"; exit 1 ;;
+    --*) echo "Unknown flag: $arg"; exit 1 ;;
+    *)
+      if [[ -n "$NEW_VERSION" ]]; then
+        echo "Error: version given twice ($NEW_VERSION and $arg)"; exit 1
+      fi
+      NEW_VERSION="$arg"
+      ;;
   esac
 done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
-
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "Error: working tree has uncommitted changes. Commit or stash first."
-  exit 1
-fi
 
 command -v jq   >/dev/null || { echo "Error: jq required"; exit 1; }
 command -v gh   >/dev/null || { echo "Error: gh required"; exit 1; }
@@ -55,6 +49,40 @@ command -v npm  >/dev/null || { echo "Error: npm required"; exit 1; }
 CURRENT_CLI=$(jq -r '.version' cli/package.json)
 CURRENT_FOUNDRY=$(jq -r '.version' foundry/module.json)
 CURRENT_COMPILER=$(jq -r '.version' foundry-compiler/package.json)
+
+# No version on the command line: offer a bump menu computed from the cli version.
+if [[ -z "$NEW_VERSION" ]]; then
+  BASE="${CURRENT_CLI%%-*}"   # drop any prerelease suffix before computing bumps
+  IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
+  PATCH_V="$MAJOR.$MINOR.$((PATCH + 1))"
+  MINOR_V="$MAJOR.$((MINOR + 1)).0"
+  MAJOR_V="$((MAJOR + 1)).0.0"
+  echo "Current version: $CURRENT_CLI"
+  echo "Select the new version:"
+  echo "  1) patch  -> $PATCH_V"
+  echo "  2) minor  -> $MINOR_V"
+  echo "  3) major  -> $MAJOR_V"
+  echo "  4) custom"
+  read -p "Choice [1-4]: " -r CHOICE
+  case "$CHOICE" in
+    1) NEW_VERSION="$PATCH_V" ;;
+    2) NEW_VERSION="$MINOR_V" ;;
+    3) NEW_VERSION="$MAJOR_V" ;;
+    4) read -p "Enter version: " -r NEW_VERSION ;;
+    *) echo "Aborted."; exit 1 ;;
+  esac
+fi
+
+if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+  echo "Error: version must be semver (e.g. 1.0.0 or 1.0.0-rc.1), got: $NEW_VERSION"
+  exit 1
+fi
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "Error: working tree has uncommitted changes. Commit or stash first."
+  exit 1
+fi
+
 echo "Current versions:"
 echo "  cli:              $CURRENT_CLI"
 echo "  foundry:          $CURRENT_FOUNDRY"
