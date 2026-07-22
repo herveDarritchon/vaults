@@ -13,10 +13,14 @@ export interface LayoutInput {
   defaultImageWidth: string;
   /** Center images in the article body. */
   centerImages: boolean;
-  /** Internal-link preview behavior. "normal": hover preview, click navigates.
-   *  "sticky": hover preview, click pins it open (with a "Go to page" link).
-   *  "none": no previews at all. */
+  /** Internal-link preview behavior on pointer (desktop) devices. "normal":
+   *  hover preview, click navigates. "sticky": hover preview, click pins it open
+   *  (with a "Go to page" link). "none": no previews at all. */
   previewMode: "none" | "normal" | "sticky";
+  /** Preview behavior on touch (mobile) devices, which have no hover. "sticky":
+   *  tap shows a preview with a "Go to page" link. "none": taps just navigate.
+   *  ("normal" has no hover to trigger it and behaves like "none" here.) */
+  previewModeMobile: "none" | "normal" | "sticky";
   /** Pages that link to this one. */
   backlinks: PageMeta[];
   /** True if this site has roles beyond the default (i.e. login UI is meaningful). */
@@ -25,6 +29,8 @@ export interface LayoutInput {
   hasHandlerJs: boolean;
   /** True if /_handlers.css was emitted (any handler declared a style asset). */
   hasHandlerCss: boolean;
+  /** True if this variant contains KaTeX math (links /katex/katex.min.css). */
+  hasMathCss: boolean;
   /** Content-hash token appended to shared asset URLs (?v=…) for cache busting. */
   assetVersion: string;
   /** Pre-rendered footer HTML (empty string = no footer). */
@@ -72,7 +78,7 @@ export function renderLayout(input: LayoutInput): string {
 <link rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/styles.css?v=${attr(input.assetVersion)}">
 <link rel="stylesheet" href="/user.css?v=${attr(input.assetVersion)}">
-${input.hasHandlerCss ? `<link rel="stylesheet" href="/_handlers.css?v=${attr(input.assetVersion)}">` : ""}${input.hasHandlerJs ? `\n<script src="/_handlers.js?v=${attr(input.assetVersion)}" defer></script>` : ""}
+${input.hasMathCss ? `<link rel="stylesheet" href="/katex/katex.min.css?v=${attr(input.assetVersion)}">\n` : ""}${input.hasHandlerCss ? `<link rel="stylesheet" href="/_handlers.css?v=${attr(input.assetVersion)}">` : ""}${input.hasHandlerJs ? `\n<script src="/_handlers.js?v=${attr(input.assetVersion)}" defer></script>` : ""}
 ${renderSocialMeta(input)}
 ${THEME_BOOT_SCRIPT}
 </head>
@@ -110,7 +116,7 @@ ${THEME_BOOT_SCRIPT}
   </aside>
 </div>
 ${EXPLORER_INIT_SCRIPT}
-${input.previewMode === "none" ? "" : hoverPreviewScript(input.previewMode === "sticky")}
+${input.previewMode === "none" && input.previewModeMobile === "none" ? "" : hoverPreviewScript(input.previewMode, input.previewModeMobile)}
 ${TOC_SCRIPT}
 ${SEARCH_SCRIPT}
 ${LIGHTBOX_SCRIPT}
@@ -319,16 +325,22 @@ const EXPLORER_INIT_SCRIPT = `<script>
 })();
 </script>`;
 
-function hoverPreviewScript(sticky: boolean): string {
+function hoverPreviewScript(desktop: string, mobile: string): string {
   return `<script>
 (function () {
   // Hovering an internal link shows a transient preview (pointer devices only)
-  // that fades when you move away. When PIN is on, clicking pins the preview
-  // open instead of navigating (the "Go to page" footer is then the way
-  // through, and it stays until you click elsewhere or press Escape); when off,
-  // clicks navigate normally and the preview is hover-only.
-  const PIN = ${sticky};
+  // that fades when you move away. When PIN is on, the preview carries a "Go to
+  // page" footer on hover so a reader can navigate in one click; clicking the
+  // link itself pins the preview open instead of navigating, and a pinned
+  // preview stays (with a close button) until you click elsewhere or press
+  // Escape. When off, clicks navigate normally and the preview is hover-only.
   const HOVERABLE = window.matchMedia('(hover: hover)').matches;
+  // Preview behavior is chosen per device class: pointer devices use the desktop
+  // mode, touch devices (no hover) use the mobile mode. 'none' for this device
+  // registers nothing; on touch, 'normal' has no hover to trigger it either.
+  const MODE = HOVERABLE ? '${desktop}' : '${mobile}';
+  if (MODE === 'none') return;
+  const PIN = MODE === 'sticky';
   const cache = new Map();
   let popover = null, showTimer = null, hideTimer = null, activeLink = null, pinned = false;
   const HOVER_DELAY = 220, HIDE_DELAY = 180;
@@ -337,6 +349,10 @@ function hoverPreviewScript(sticky: boolean): string {
     if (popover) return popover;
     popover = document.createElement('div');
     popover.className = 'wiki-preview';
+    // Sticky mode shows the "Go to page" footer on hover too (CSS keyed off
+    // .is-sticky), so a reader can navigate in one click instead of clicking to
+    // pin and then clicking the footer.
+    if (PIN) popover.classList.add('is-sticky');
     popover.addEventListener('mouseenter', () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } });
     popover.addEventListener('mouseleave', () => { if (!pinned) schedHide(); });
     popover.addEventListener('click', (e) => {
@@ -381,9 +397,10 @@ function hoverPreviewScript(sticky: boolean): string {
       html += '<div class="wiki-preview-title">' + esc(data.title) + '</div>' +
              '<div class="wiki-preview-body">' + (data.summary || '') + '</div>';
     }
-    // Footer and close button are always in the markup but only shown on a
-    // pinned popover (CSS, keyed off .is-pinned); a transient hover preview
-    // shows neither.
+    // The "Go to page" footer is always in the markup; CSS shows it on any
+    // sticky-mode popover (.is-sticky) and on a pinned one (.is-pinned). In
+    // normal mode a transient hover preview shows no footer (the link itself
+    // navigates on click).
     html += '<a class="wiki-preview-goto" href="' + esc(href) + '">Go to page →</a>';
     return html;
   }

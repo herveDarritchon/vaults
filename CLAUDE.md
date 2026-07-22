@@ -61,6 +61,7 @@ user's Cloudflare account (one Pages project per user)
     │   └── _search-index.json
     ├── styles.css, user.css   shared at root (no role gate)
     ├── _handlers.js, _handlers.css   bundled built-in + user handler assets
+    ├── katex/                 KaTeX css + fonts (only when a page has math)
     ├── login.html             multi-role builds only
     └── functions/
         └── _middleware.js     role gate via signed cookie + variant rewrite,

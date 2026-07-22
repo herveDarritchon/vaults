@@ -1,6 +1,8 @@
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import remarkRehype from "remark-rehype";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -66,6 +68,7 @@ function buildPipeline(opts?: PreviewOptions) {
   return unified()
     .use(remarkParse)
     .use(remarkGfm)
+    .use(remarkMath)
     .use(opts ? handlersPlugin({
       registry: opts.registry,
       context: {
@@ -78,6 +81,9 @@ function buildPipeline(opts?: PreviewOptions) {
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(rehypeRaw)
     .use(rehypeSanitize, previewSanitizeSchema)
+    // After sanitize for the same reason as the main pipeline: KaTeX's
+    // generated markup (inline styles, MathML) must not be stripped.
+    .use(rehypeKatex)
     .use(rehypeStringify);
 }
 

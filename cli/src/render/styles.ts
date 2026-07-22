@@ -903,7 +903,8 @@ code.fm-missing { color: #b94a3a; background: color-mix(in srgb, #b94a3a 10%, tr
 .wiki-preview-title { font-weight: 700; margin-bottom: 0.2rem; }
 .wiki-preview-subheading { color: var(--accent); font-size: 0.8rem; margin-bottom: 0.4rem; font-style: italic; }
 .wiki-preview-body { color: var(--muted); }
-/* Footer and close button are pinned-only; hidden on transient hover previews. */
+/* The goto footer shows on any sticky-mode preview (hover or pinned); the close
+   button is pinned-only. In normal mode a hover preview shows neither. */
 .wiki-preview-goto {
   display: none; margin-top: 0.6rem; padding-top: 0.5rem;
   border-top: 1px solid var(--rule);
@@ -916,6 +917,7 @@ code.fm-missing { color: #b94a3a; background: color-mix(in srgb, #b94a3a 10%, tr
   color: var(--muted); font-size: 1.15rem; cursor: pointer;
 }
 .wiki-preview-close:hover { background: var(--rule); color: var(--fg); }
+.wiki-preview.is-sticky .wiki-preview-goto,
 .wiki-preview.is-pinned .wiki-preview-goto { display: block; }
 .wiki-preview.is-pinned .wiki-preview-close { display: block; }
 .wiki-preview.is-pinned .wiki-preview-title { padding-right: 1.25rem; }

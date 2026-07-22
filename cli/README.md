@@ -47,6 +47,7 @@ Cloudflare Pages           ← per-user, your account
 - **Images and media are gated too.** Only images, audio, video, PDFs, and EPUBs embedded by visible pages are copied into a given variant. Unknown extensions are skipped by default (toggle `include_unknown_files`).
 - **Incremental sync.** External clients (the [Foundry VTT module](https://github.com/wizzlethorpe/vaults)) probe `/_manifest.json` to discover the deploy's name, auth requirements, and role order, then pull `/_batch` (text) and `/_batch-images` (binary) for changed content. Manifest hashes fold in per-page frontmatter, so a role flip or title rename triggers a sync without a body diff.
 - **Bases support.** `.base` files render as cards / table / list inside the wiki, just like inside Obsidian.
+- **LaTeX math.** `$inline$` and `$$display$$` math render server-side via KaTeX, matching Obsidian's syntax. The stylesheet and fonts are self-hosted and only ship for vaults that contain math.
 - **Social meta.** OG / Twitter card tags are auto-generated. Pages without an explicit `image:` frontmatter use the first body embed (toggle with `auto_image`).
 
 ## Commands

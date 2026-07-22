@@ -1,5 +1,6 @@
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { relative } from "node:path";
 import { dirname, join } from "node:path";
 import { availableParallelism } from "node:os";
@@ -369,8 +370,11 @@ export async function buildSite(opts: BuildOptions): Promise<BuildResult> {
   // after a push until a hard refresh; stamping a content hash onto their
   // URLs makes a changed asset a new URL, so it's re-fetched automatically.
   // One combined hash keeps it simple; any shared-asset change busts all.
+  // katex version rides in the hash so a dependency upgrade re-fetches the
+  // (otherwise never-changing) /katex/katex.min.css on math pages.
+  const katexVersion = createRequire(import.meta.url)("katex/package.json").version as string;
   const assetVersion = createHash("md5")
-    .update(DEFAULT_CSS + themeOverride + userCss + handlerAssets.js + handlerAssets.css)
+    .update(DEFAULT_CSS + themeOverride + userCss + handlerAssets.js + handlerAssets.css + katexVersion)
     .digest("hex")
     .slice(0, 10);
 
@@ -426,6 +430,7 @@ export async function buildSite(opts: BuildOptions): Promise<BuildResult> {
   // ── Per-role variant builds ─────────────────────────────────────────────
   const perRolePageCount: Record<string, number> = {};
   const collapseToRoot = roles.length === 1;
+  let katexCopied = false;
 
   for (const role of roles) {
     const variantDir = collapseToRoot
@@ -468,6 +473,14 @@ export async function buildSite(opts: BuildOptions): Promise<BuildResult> {
     });
     perRolePageCount[role] = stats.pageCount;
     if (!collapseToRoot) console.log(`  variant '${role}': ${stats.pageCount} pages`);
+
+    // KaTeX stylesheet + fonts, shared at the deploy root. Copied lazily on
+    // the first variant that rendered math (before that variant's manifest is
+    // built, so the manifest sees them); math-free vaults ship nothing.
+    if (stats.hasMath && !katexCopied) {
+      await copyKatexAssets(join(opts.outputDir, "katex"));
+      katexCopied = true;
+    }
 
     // Foundry-import opt-in bundles, emitted INSIDE the variant directory
     // (not at the deploy root) so the auth middleware role-gates them.
@@ -613,6 +626,8 @@ interface VariantStats {
   pageCount: number;
   /** Maps `.body.html` path (variant-relative) to its meta payload. Empty unless any page sets a foundry block / image. */
   bodyMeta: Map<string, BodyMeta>;
+  /** True when any page in this variant rendered KaTeX math. */
+  hasMath: boolean;
 }
 
 async function buildVariant(a: VariantArgs): Promise<VariantStats> {
@@ -677,7 +692,7 @@ async function buildVariant(a: VariantArgs): Promise<VariantStats> {
   };
 
   // Pass 1: render bodies + collect outlinks + warnings.
-  interface Rendered { title: string; html: string; outlinks: string[]; warnings: RenderWarning[]; }
+  interface Rendered { title: string; html: string; outlinks: string[]; warnings: RenderWarning[]; hasMath: boolean; }
   const rendered = new Map<string, Rendered>();
 
   const progress = new Progress(`Pages (${a.role})`);
@@ -694,6 +709,7 @@ async function buildVariant(a: VariantArgs): Promise<VariantStats> {
       html: result.html,
       outlinks: result.outlinks,
       warnings: result.warnings,
+      hasMath: result.hasMath,
     });
   }, (done, total) => progress.update(done, total));
 
@@ -713,7 +729,12 @@ async function buildVariant(a: VariantArgs): Promise<VariantStats> {
   }
 
   // Pass 2: write layouts + preview JSON.
+  // Math CSS is variant-wide, not per-page: hover previews inject other
+  // pages' rendered HTML, so a math-free page can still display math.
+  const hasMathCss = [...rendered.values()].some((r) => r.hasMath);
   const previewMode = previewModeOf(a.settings.preview_mode);
+  const previewModeMobile = previewModeOf(a.settings.preview_mode_mobile);
+  const previewsEnabled = previewMode !== "none" || previewModeMobile !== "none";
   const bodyMeta = new Map<string, BodyMeta>();
   await pMap(visibleMetas, a.concurrency, async (p) => {
     const r = rendered.get(p.path)!;
@@ -731,10 +752,12 @@ async function buildVariant(a: VariantArgs): Promise<VariantStats> {
       defaultImageWidth: a.settings.default_image_width,
       centerImages: a.settings.center_images,
       previewMode,
+      previewModeMobile,
       backlinks,
       authConfigured: a.authConfigured,
       hasHandlerJs: a.hasHandlerJs,
       hasHandlerCss: a.hasHandlerCss,
+      hasMathCss,
       assetVersion: a.assetVersion,
       footerHtml: a.footerHtml,
       theme: themeOf(a.settings.theme),
@@ -756,8 +779,9 @@ async function buildVariant(a: VariantArgs): Promise<VariantStats> {
 
     bodyMeta.set(bodyPath, await collectBodyMeta(p, a.vaultPath));
 
-    // Preview JSON feeds the hover popover; "none" ships no popover, so skip it.
-    if (previewMode !== "none") {
+    // Preview JSON feeds the popover; skip it only when neither device class
+    // shows previews (both modes "none").
+    if (previewsEnabled) {
       const source = visibleSources.get(p.path)!;
       const preview = await buildPreview(source, r.title, {
         frontmatter: a.parsedSources.get(p.path)?.data ?? {},
@@ -780,9 +804,11 @@ async function buildVariant(a: VariantArgs): Promise<VariantStats> {
     defaultImageWidth: a.settings.default_image_width,
     centerImages: a.settings.center_images,
     previewMode,
+    previewModeMobile,
     authConfigured: a.authConfigured,
     hasHandlerJs: a.hasHandlerJs,
     hasHandlerCss: a.hasHandlerCss,
+    hasMathCss,
     assetVersion: a.assetVersion,
     footerHtml: a.footerHtml,
     theme: themeOf(a.settings.theme),
@@ -813,7 +839,26 @@ async function buildVariant(a: VariantArgs): Promise<VariantStats> {
   // public deploy because no public-tier source mentions it.
   await copyReferencedPassthroughs(visibleSources, visibleMetas, a.passthroughIndex, a.passthroughStagingDir, a.variantDir);
 
-  return { pageCount: visibleMetas.length, bodyMeta };
+  return { pageCount: visibleMetas.length, bodyMeta, hasMath: hasMathCss };
+}
+
+/**
+ * Copy KaTeX's stylesheet and fonts (from the katex package dependency) to
+ * <outputDir>/katex/. woff2 only: the CSS lists woff2 first, so any browser
+ * that supports it (all modern ones) never requests the woff/ttf fallbacks.
+ */
+async function copyKatexAssets(destDir: string): Promise<void> {
+  const distDir = join(
+    dirname(createRequire(import.meta.url).resolve("katex/package.json")),
+    "dist",
+  );
+  await mkdir(join(destDir, "fonts"), { recursive: true });
+  await copyFile(join(distDir, "katex.min.css"), join(destDir, "katex.min.css"));
+  for (const f of await readdir(join(distDir, "fonts"))) {
+    if (f.endsWith(".woff2")) {
+      await copyFile(join(distDir, "fonts", f), join(destDir, "fonts", f));
+    }
+  }
 }
 
 /**

@@ -1,6 +1,8 @@
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import remarkRehype from "remark-rehype";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -64,6 +66,8 @@ export interface RenderResult {
   outlinks: string[];
   /** Broken wikilinks, missing images, missing transclusions encountered while rendering. */
   warnings: RenderWarning[];
+  /** True when the page contains KaTeX-rendered math (needs katex.min.css). */
+  hasMath: boolean;
 }
 
 /**
@@ -104,6 +108,9 @@ export async function renderMarkdown(
   const file = await unified()
     .use(remarkParse)
     .use(remarkGfm)
+    // Obsidian-style math: $inline$ and $$display$$ become math nodes at
+    // parse time (so underscores etc. inside math never hit emphasis rules).
+    .use(remarkMath)
     // Handlers run early so any markdown they emit is processed by the
     // rest of the pipeline (wikilinks resolve, embeds inline, etc.).
     // Empty registry (no built-ins, no user handlers) short-circuits to
@@ -133,6 +140,11 @@ export async function renderMarkdown(
     .use(rehypeRaw)
     .use(rehypeSlug)
     .use(rehypeSanitize, sanitizeSchema)
+    // KaTeX runs AFTER sanitize: math travels through it as a harmless
+    // <code class="language-math"> element, and the markup KaTeX expands it
+    // into (inline styles, MathML) would otherwise be stripped. Safe because
+    // KaTeX generates that markup itself from plain text.
+    .use(rehypeKatex)
     .use(rehypeStringify)
     .process(content);
 
@@ -140,5 +152,10 @@ export async function renderMarkdown(
     || extractH1(parsed.content)
     || fallbackTitle;
 
-  return { html: String(file), title, frontmatter: fm, outlinks, warnings };
+  const html = String(file);
+  // Cheap detection so the build links katex.min.css only where needed. A
+  // literal 'class="katex' inside a code fence false-positives, which merely
+  // loads the stylesheet unnecessarily.
+  const hasMath = html.includes('class="katex');
+  return { html, title, frontmatter: fm, outlinks, warnings, hasMath };
 }

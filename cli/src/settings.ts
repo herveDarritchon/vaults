@@ -19,6 +19,7 @@ export interface Settings {
   default_image_width: string;
   center_images: boolean;
   preview_mode: string;
+  preview_mode_mobile: string;
   default_role: string;
   accent_color: string;
   bg_color: string;
@@ -83,7 +84,13 @@ const SCHEMA: { [K in keyof Settings]: SettingDef<K> } = {
     default: "normal",
     type: "string",
     description:
-      "Internal-link preview behavior: 'normal' (the default) hovers a preview popover and navigates on click; 'sticky' hovers a preview and pins it open on click (with a 'Go to page' link) instead of navigating; 'none' disables previews entirely so links just navigate.",
+      "Internal-link preview behavior on pointer (desktop) devices: 'normal' (the default) hovers a preview popover and navigates on click; 'sticky' hovers a preview and pins it open on click (with a 'Go to page' link) instead of navigating; 'none' disables previews entirely so links just navigate.",
+  },
+  preview_mode_mobile: {
+    default: "sticky",
+    type: "string",
+    description:
+      "Internal-link preview behavior on touch (mobile) devices, where there is no hover: 'sticky' (the default) shows a preview on tap with a 'Go to page' link instead of navigating; 'none' disables previews so taps just navigate. ('normal' has no hover to trigger it on touch and behaves like 'none'.)",
   },
   default_role: {
     default: "",
