@@ -22,9 +22,10 @@
 // The browser runtime (BATTLEMAP_RUNTIME below) ships as a built-in asset
 // concatenated into _handlers.js; styles go into _handlers.css.
 //
-// Layer paths are vault-relative and resolve to the absolute served URL. They
-// must also be staged into the deploy — true when the page already references
-// them (e.g. a Scene's foundry.data_json), which is the common case.
+// Layer paths are vault-relative and resolve to the absolute served URL. The
+// build's per-variant asset scanner stages them via battlemapLayerPaths below,
+// so a layer nothing else references (e.g. a web-only composited overlay)
+// still ships with the deploy.
 
 import yaml from "js-yaml";
 import type { CodeBlockHandler } from "../types.js";
@@ -55,6 +56,31 @@ function servedSrc(path: string): string {
 
 function errorBox(message: string): { html: string } {
   return { html: `<div class="vaults-bm-error">${htmlEscape(message)}</div>` };
+}
+
+// ```battlemap fenced blocks in raw markdown source.
+const FENCE_RE = /^```battlemap[ \t]*\r?\n([\s\S]*?)^```/gm;
+
+/** All layer image paths (vault-relative) named by ```battlemap blocks in a
+ *  markdown source. Used by the build's asset scanner to stage layers into
+ *  each variant; unparseable blocks contribute nothing. */
+export function battlemapLayerPaths(source: string): string[] {
+  const paths: string[] = [];
+  for (const match of source.matchAll(FENCE_RE)) {
+    let spec: RawSpec;
+    try {
+      spec = (yaml.load(match[1]!) ?? {}) as RawSpec;
+    } catch {
+      continue;
+    }
+    for (const lv of Array.isArray(spec.levels) ? (spec.levels as RawLevel[]) : []) {
+      if (!Array.isArray(lv?.layers)) continue;
+      for (const p of lv.layers as unknown[]) {
+        if (typeof p === "string" && p.length > 0) paths.push(p);
+      }
+    }
+  }
+  return paths;
 }
 
 export const battlemapHandler: CodeBlockHandler = {

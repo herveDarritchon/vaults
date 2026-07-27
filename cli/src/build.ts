@@ -31,6 +31,7 @@ import { renderAuthMiddleware, LOGIN_HTML } from "./render/auth-template.js";
 import { renderFooterHtml } from "./render/footer.js";
 import type { ImageEntry, PageMeta, RenderContext, RenderWarning } from "./render/types.js";
 import { buildRegistry, type HandlerRegistry } from "./render/handlers/types.js";
+import { battlemapLayerPaths } from "./render/handlers/builtin/battlemap.js";
 import { loadUserHandlers } from "./render/handlers/loader.js";
 import { BUILTIN_HANDLERS } from "./render/handlers/builtin/index.js";
 import { bundleHandlerAssets } from "./render/handlers/assets.js";
@@ -1031,6 +1032,13 @@ async function copyReferencedImages(
       if (/^(https?:|mailto:|#)/i.test(name)) continue;
       if (!IMAGE_EXT_RE.test(name)) continue;
       const image = imageIndex.get(slugify(name.split("/").pop()!));
+      if (image) refs.add(image.outputPath);
+    }
+    // Layers named inside ```battlemap blocks. A web-only layer (e.g. a
+    // composited tile overlay) has no other reference to stage it, so look
+    // it up by its full vault-relative path.
+    for (const path of battlemapLayerPaths(source)) {
+      const image = imageIndex.get(path);
       if (image) refs.add(image.outputPath);
     }
   }

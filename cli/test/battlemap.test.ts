@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { battlemapHandler } from "../src/render/handlers/builtin/battlemap.js";
+import { battlemapHandler, battlemapLayerPaths } from "../src/render/handlers/builtin/battlemap.js";
 
 function render(content: string): string {
   return (battlemapHandler.render(content, {} as never) as { html: string }).html;
@@ -57,5 +57,23 @@ describe("battlemap handler", () => {
   it("degrades to an error box on bad input", () => {
     assert.ok(render("levels: []").includes("vaults-bm-error"));
     assert.ok(render(": : not yaml : :").includes("vaults-bm-error"));
+  });
+});
+
+describe("battlemapLayerPaths", () => {
+  it("collects layer paths from every battlemap block in a source", () => {
+    const source = `# Page\n\n\`\`\`battlemap${SAMPLE}\`\`\`\n\ntext\n\n\`\`\`battlemap\nlevels:\n  - name: B\n    layers:\n      - "attachments/other/overlay.webp"\n\`\`\`\n`;
+    assert.deepEqual(battlemapLayerPaths(source), [
+      "attachments/foundry/wizard-prison/Rock.webp",
+      "attachments/foundry/wizard-prison/Dungeon.webp",
+      "attachments/foundry/wizard-prison/Rock.webp",
+      "attachments/other/overlay.webp",
+    ]);
+  });
+
+  it("ignores other fences, unparseable yaml, and sources without blocks", () => {
+    assert.deepEqual(battlemapLayerPaths("```js\nconst x = 1;\n```\n"), []);
+    assert.deepEqual(battlemapLayerPaths("```battlemap\n: : not yaml : :\n```\n"), []);
+    assert.deepEqual(battlemapLayerPaths("plain text"), []);
   });
 });
