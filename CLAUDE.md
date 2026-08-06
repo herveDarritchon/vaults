@@ -44,7 +44,7 @@ When the user gives you a task, default to assuming it's about `cli/` unless the
 ├── settings.md             ← user-editable (Obsidian Properties UI)
 ├── …content…
 └── .vaults/                ← all CLI-managed internal state
-    ├── config.json         ← CLI-managed: roles, password hashes, project name, Patreon config
+    ├── config.json         ← CLI-managed: roles, password hashes, project name, OAuth (Patreon / OIDC) config
     ├── cache/              ← build cache (rendered HTML, image webp cache)
     └── handlers/           ← optional custom inline / code-block handlers
         │

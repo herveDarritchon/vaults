@@ -28,6 +28,7 @@ import { loadSettings, writeSettings, SETTINGS_FILE, type Settings } from "./set
 import { loadConfig, saveConfig, type VaultConfig } from "./config.js";
 import matter from "gray-matter";
 import { renderAuthMiddleware, LOGIN_HTML } from "./render/auth-template.js";
+import { htmlAttr } from "./escape.js";
 import { renderFooterHtml } from "./render/footer.js";
 import type { ImageEntry, PageMeta, RenderContext, RenderWarning } from "./render/types.js";
 import { buildRegistry, type HandlerRegistry } from "./render/handlers/types.js";
@@ -537,10 +538,25 @@ export async function buildSite(opts: BuildOptions): Promise<BuildResult> {
           tiers: patreon.tiers,
         }
       : null;
+    // Same contract for the OIDC overlay: rides only when configured AND at
+    // least one role has a rule; clientSecret stays in the Wrangler secret
+    // OAUTH_CLIENT_SECRET, read from env in the Function.
+    const oidc = cfg.oauth?.oidc;
+    const oidcForFn = oidc && oidc.roleRules && Object.keys(oidc.roleRules).length > 0
+      ? {
+          displayName: oidc.displayName,
+          clientId: oidc.clientId,
+          authorizationEndpoint: oidc.authorizationEndpoint,
+          tokenEndpoint: oidc.tokenEndpoint,
+          userinfoEndpoint: oidc.userinfoEndpoint,
+          roleRules: oidc.roleRules,
+        }
+      : null;
     const middleware = renderAuthMiddleware({
       roles,
       rolePasswords: cfg.rolePasswords,
       ...(patreonForFn ? { patreon: patreonForFn } : {}),
+      ...(oidcForFn ? { oidc: oidcForFn } : {}),
     });
     await writeFile(join(fnDir, "_middleware.js"), middleware);
 
@@ -552,10 +568,13 @@ export async function buildSite(opts: BuildOptions): Promise<BuildResult> {
     const patreonRolesAttr = patreonForFn
       ? ` data-patreon-roles="${Object.keys(patreonForFn.tiers).join(",")}"`
       : "";
+    // displayName is free text (unlike role names), so attribute-escape it.
+    const oidcAttr = oidcForFn ? ` data-oidc="${htmlAttr(oidcForFn.displayName)}"` : "";
     await writeFile(join(opts.outputDir, "login.html"),
       LOGIN_HTML
         .replace("__ROLE_OPTIONS__", opts_html)
-        .replace("__PATREON_ROLES_ATTR__", patreonRolesAttr));
+        .replace("__PATREON_ROLES_ATTR__", patreonRolesAttr)
+        .replace("__OIDC_ATTR__", oidcAttr));
 
     const missing = protectedRoles.filter((r) => !cfg.rolePasswords[r]);
     if (missing.length > 0) {

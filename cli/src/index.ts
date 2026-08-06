@@ -7,6 +7,7 @@ import { init } from "./commands/init.js";
 import { password } from "./commands/password.js";
 import { roleAdd, roleDemote, roleList, rolePromote, roleRemove } from "./commands/role.js";
 import { patreonClear, patreonConfigure, patreonLink, patreonStatus, patreonUnlink } from "./commands/patreon.js";
+import { oidcClear, oidcConfigure, oidcStatus } from "./commands/oidc.js";
 import { listMigrations, runMigrations } from "./migrate/run.js";
 import { CLI_VERSION } from "./version.js";
 
@@ -134,6 +135,37 @@ patreon
   .argument("[vault-path]", "Path to the Obsidian vault", VAULT_PATH_DEFAULT)
   .action(async (vaultPath: string) => {
     try { await patreonStatus(vaultPath); }
+    catch (err) { console.error(err instanceof Error ? err.message : err); process.exit(1); }
+  });
+
+const oidc = program
+  .command("oidc")
+  .description("Configure optional OIDC single sign-on (any standards-compliant issuer)");
+
+oidc
+  .command("configure")
+  .description("Set the issuer, client credentials, and per-role email/domain rules")
+  .argument("[vault-path]", "Path to the Obsidian vault", VAULT_PATH_DEFAULT)
+  .action(async (vaultPath: string) => {
+    try { await oidcConfigure(vaultPath); }
+    catch (err) { console.error(err instanceof Error ? err.message : err); process.exit(1); }
+  });
+
+oidc
+  .command("status")
+  .description("Show current OIDC configuration + role rules")
+  .argument("[vault-path]", "Path to the Obsidian vault", VAULT_PATH_DEFAULT)
+  .action(async (vaultPath: string) => {
+    try { await oidcStatus(vaultPath); }
+    catch (err) { console.error(err instanceof Error ? err.message : err); process.exit(1); }
+  });
+
+oidc
+  .command("clear")
+  .description("Remove the entire OIDC configuration")
+  .argument("[vault-path]", "Path to the Obsidian vault", VAULT_PATH_DEFAULT)
+  .action(async (vaultPath: string) => {
+    try { await oidcClear(vaultPath); }
     catch (err) { console.error(err instanceof Error ? err.message : err); process.exit(1); }
   });
 

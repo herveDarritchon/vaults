@@ -2,13 +2,14 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { readDotEnv, writeDotEnv } from "./dotenv.js";
 import { warnSensitive } from "./sensitive.js";
+import type { OidcRoleRule } from "./render/oidc-match.js";
 
 /**
  * `.vaultrc.json` holds CLI-managed CONFIG (project name, role list,
  * password hashes, Patreon clientId/campaignId/tiers). Safe to commit.
  *
- * `.env` holds CLI-managed SECRETS (SESSION_SECRET, PATREON_CLIENT_SECRET).
- * NOT safe to commit; gitignored by `vaults init`.
+ * `.env` holds CLI-managed SECRETS (SESSION_SECRET, PATREON_CLIENT_SECRET,
+ * OAUTH_CLIENT_SECRET). NOT safe to commit; gitignored by `vaults init`.
  *
  * The split lets users version-control config + sync it across machines
  * without leaking the cookie-signing key or Patreon OAuth secret.
@@ -49,6 +50,7 @@ export interface VaultConfig {
    */
   oauth?: {
     patreon?: PatreonConfig;
+    oidc?: OidcConfig;
   };
 }
 
@@ -58,6 +60,26 @@ export interface PatreonConfig {
   campaignId: string;
   /** Role name → Patreon tier ID. Roles not in here only allow password auth. */
   tiers?: Record<string, string>;
+}
+
+/**
+ * Generic OIDC provider. The three endpoints are resolved from the issuer's
+ * discovery document by `vaults oidc configure` (or entered manually) and
+ * baked in here, so the deployed middleware never fetches discovery.
+ */
+export interface OidcConfig {
+  /** Issuer base URL, e.g. "https://lmucs.org". Kept for re-discovery on reconfigure. */
+  issuer: string;
+  /** Login button label ("Sign in with <displayName>"); defaults to the issuer host. */
+  displayName: string;
+  clientId: string;
+  /** In-memory only; persisted to `.env` as OAUTH_CLIENT_SECRET, never to config.json. */
+  clientSecret: string;
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  userinfoEndpoint: string;
+  /** Role name → email/domain rule. Roles not in here only allow password auth. */
+  roleRules?: Record<string, OidcRoleRule>;
 }
 
 const DEFAULT_CONFIG: VaultConfig = {
@@ -75,6 +97,7 @@ import { configPath } from "./paths.js";
 // write is exactly what gets uploaded as the Cloudflare Pages secret.
 const ENV_SESSION_SECRET = "SESSION_SECRET";
 const ENV_PATREON_CLIENT_SECRET = "PATREON_CLIENT_SECRET";
+const ENV_OAUTH_CLIENT_SECRET = "OAUTH_CLIENT_SECRET";
 
 /**
  * Read config from `.vaultrc.json` + `.env` + process.env.
@@ -112,6 +135,16 @@ export async function loadConfig(vaultPath: string, overrides: Partial<VaultConf
     }
   }
 
+  if (merged.oauth?.oidc) {
+    const oidcSecretFromEnv = process.env[ENV_OAUTH_CLIENT_SECRET] || dotEnv[ENV_OAUTH_CLIENT_SECRET];
+    if (oidcSecretFromEnv) {
+      merged.oauth = {
+        ...merged.oauth,
+        oidc: { ...merged.oauth.oidc, clientSecret: oidcSecretFromEnv },
+      };
+    }
+  }
+
   // Deep-clone the mutable fields so callers can mutate (push to roles,
   // assign to rolePasswords) without mutating DEFAULT_CONFIG by reference.
   return {
@@ -123,6 +156,8 @@ export async function loadConfig(vaultPath: string, overrides: Partial<VaultConf
         ...(merged.oauth.patreon ? {
           patreon: { ...merged.oauth.patreon, tiers: { ...(merged.oauth.patreon.tiers ?? {}) } },
         } : {}),
+        // structuredClone: roleRules nests arrays, manual spreading gets noisy.
+        ...(merged.oauth.oidc ? { oidc: structuredClone(merged.oauth.oidc) } : {}),
       },
     } : {}),
   };
@@ -152,6 +187,10 @@ export async function saveConfig(vaultPath: string, cfg: VaultConfig): Promise<v
         const { clientSecret: _drop, ...rest } = oauth.patreon;
         persistedOauth.patreon = rest as PatreonConfig;
       }
+      if (oauth?.oidc) {
+        const { clientSecret: _drop, ...rest } = oauth.oidc;
+        persistedOauth.oidc = rest as OidcConfig;
+      }
       out.oauth = persistedOauth;
       continue;
     }
@@ -167,11 +206,13 @@ export async function saveConfig(vaultPath: string, cfg: VaultConfig): Promise<v
   const envUpdates: Record<string, string | null> = {
     [ENV_SESSION_SECRET]: cfg.sessionSecret || null,
     [ENV_PATREON_CLIENT_SECRET]: cfg.oauth?.patreon?.clientSecret || null,
+    [ENV_OAUTH_CLIENT_SECRET]: cfg.oauth?.oidc?.clientSecret || null,
   };
   // Only touch .env if there's something to set/clear; avoids creating an
   // empty .env in vaults that don't have any secrets.
   const hasAnySecret = Object.values(envUpdates).some((v) => v != null);
-  if (hasAnySecret || (await readDotEnv(vaultPath))[ENV_SESSION_SECRET] || (await readDotEnv(vaultPath))[ENV_PATREON_CLIENT_SECRET]) {
+  const existingEnv = await readDotEnv(vaultPath);
+  if (hasAnySecret || Object.keys(envUpdates).some((k) => existingEnv[k])) {
     await writeDotEnv(vaultPath, envUpdates);
   }
 
@@ -188,6 +229,7 @@ function describeSecrets(cfg: VaultConfig): string | null {
   const parts: string[] = [];
   if (cfg.sessionSecret) parts.push("the session-signing key");
   if (cfg.oauth?.patreon?.clientSecret) parts.push("a Patreon client secret");
+  if (cfg.oauth?.oidc?.clientSecret) parts.push("an OIDC client secret");
   if (parts.length === 0) return null;
   return parts.length === 1
     ? parts[0]!

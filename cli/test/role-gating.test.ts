@@ -20,7 +20,7 @@ import { buildSite } from "../src/build.js";
 interface Vault { dir: string; out: string; }
 
 /** Build a temp vault from a path → contents map; caller must `cleanup`. */
-async function setupVault(files: Record<string, string>): Promise<Vault> {
+async function setupVault(files: Record<string, string | Buffer>): Promise<Vault> {
   const dir = await mkdtemp(join(tmpdir(), "vault-role-"));
   const out = join(dir, "_out");
   for (const [path, content] of Object.entries(files)) {

@@ -80,6 +80,9 @@ export async function push(vaultPath: string, opts: PushOptions): Promise<void> 
   if (cfg.oauth?.patreon?.clientSecret) {
     await wranglerSecret(cfg.projectName!, "PATREON_CLIENT_SECRET", cfg.oauth.patreon.clientSecret);
   }
+  if (cfg.oauth?.oidc?.clientSecret) {
+    await wranglerSecret(cfg.projectName!, "OAUTH_CLIENT_SECRET", cfg.oauth.oidc.clientSecret);
+  }
 
   await wranglerDeploy(outputDir, cfg.projectName!);
 }

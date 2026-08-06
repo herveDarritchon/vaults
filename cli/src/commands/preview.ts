@@ -63,6 +63,10 @@ export async function preview(vaultPath: string, opts: PreviewOptions): Promise<
       wranglerArgs.push(`--binding=PATREON_CLIENT_SECRET=${cfg.oauth.patreon.clientSecret}`);
       console.log(`  Patreon login active; sign-in flows through localhost:${port}/auth/patreon/callback`);
     }
+    if (cfg.oauth?.oidc?.clientSecret) {
+      wranglerArgs.push(`--binding=OAUTH_CLIENT_SECRET=${cfg.oauth.oidc.clientSecret}`);
+      console.log(`  OIDC login active; sign-in flows through localhost:${port}/auth/oidc/callback`);
+    }
     console.log(`  multi-role build; sign in at http://localhost:${port}/login.html`);
   }
 

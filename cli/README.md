@@ -88,6 +88,20 @@ Link roles to Patreon tier IDs, so any patron at that tier can sign in with Patr
 
 You'll need to register a Patreon OAuth client at <https://www.patreon.com/portal/registration> and add `https://your-deploy-url/auth/patreon/callback` as a redirect URI before running `configure`.
 
+### OIDC login (optional)
+
+Point the vault at any standards-compliant OIDC issuer (Google, Microsoft, Okta, a self-hosted provider) and grant roles by email address or email domain. Coexists with passwords and Patreon; any of them grants the role.
+
+| Command | What it does |
+|---|---|
+| `vaults oidc configure` | Prompts for the issuer URL, resolves its discovery document (or takes endpoints manually), takes client credentials, and walks each role's email/domain rules. |
+| `vaults oidc status` | Show the issuer, endpoints, and per-role rules. |
+| `vaults oidc clear` | Remove the entire OIDC configuration. |
+
+Role rules match exactly and case-insensitively: an email entry (`dean@lmu.edu`) matches only that address (plus-addresses are distinct), and a domain entry (`lion.lmu.edu`) matches only that exact domain after the `@` — subdomains are not implied, so list them explicitly. A visitor matching several roles gets the highest one. Sign-in uses the authorization-code flow with PKCE; identity comes from the issuer's userinfo endpoint, and whatever email it reports is trusted, so only configure an issuer you trust.
+
+Register these redirect URIs on your OAuth client before running `configure`: `https://your-deploy-url/auth/oidc/callback` and `http://localhost:4173/auth/oidc/callback` (the latter covers `vaults preview` testing). The client ID lives in `.vaults/config.json`; the client secret lives only in `.env` as `OAUTH_CLIENT_SECRET` and is uploaded as a Wrangler secret on every push. Removing someone's email from a rule takes effect when their session cookie expires (7 days); use `vaults push --rotate-secret` to log everyone out immediately.
+
 Run any command with `--help` for the full flag list.
 
 ## Settings
@@ -201,7 +215,7 @@ Multi-role deploys include with a small Cloudflare Pages Function (`_middleware.
 
 - **Gates per-role variants** via a signed cookie (`SameSite=None; Secure; Partitioned`).
 - **Issues bearer tokens** through an OAuth-style `/connect` flow used by the [Foundry module](https://github.com/wizzlethorpe/vaults).
-- **Handles Patreon login** at `/auth/patreon/login` and `/auth/patreon/callback` when configured.
+- **Handles Patreon login** at `/auth/patreon/start` and `/auth/patreon/callback`, and **OIDC login** at `/auth/oidc/start` and `/auth/oidc/callback`, when configured.
 - **Exposes** `/_batch` (text) and `/_batch-images` (binary) for bulk content sync.
 - **Publishes** `/_manifest.json` with the deploy's name, role order, and auth requirements so external clients can probe the deploy before picking an auth flow.
 
@@ -215,10 +229,10 @@ Single-role (public-only) deploys skip the middleware entirely; everything serve
 MyVault/
 ├── settings.md          ← user-editable settings (Obsidian Properties UI)
 ├── …content…
-├── .env                 ← secrets only (SESSION_SECRET, PATREON_CLIENT_SECRET) — gitignored
+├── .env                 ← secrets only (SESSION_SECRET, PATREON_CLIENT_SECRET, OAUTH_CLIENT_SECRET) — gitignored
 └── .vaults/             ← all vaults-cli internal state lives here
     ├── .gitignore       ← keeps cache + config out of git automatically
-    ├── config.json      ← CLI-managed: roles, password hashes, project name, Patreon config
+    ├── config.json      ← CLI-managed: roles, password hashes, project name, OAuth (Patreon / OIDC) config
     ├── cache/           ← build cache (rendered HTML, image webp cache)
     └── handlers/        ← optional: custom inline / code-block handlers
 ```
