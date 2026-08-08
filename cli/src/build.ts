@@ -889,6 +889,7 @@ async function copyKatexAssets(destDir: string): Promise<void> {
  * Frontmatter shape forwarded to clients:
  *   foundry:
  *     base: <UUID> | <Type>[:<subtype>]   # required for instantiation
+ *     sync: false                           # default true; skip Foundry entirely
  *     embed: false                          # default true
  *     data: { … deep-merged into the doc }
  */
@@ -906,6 +907,12 @@ async function collectBodyMeta(p: PageMeta, vaultPath: string): Promise<BodyMeta
     if (typeof base === "string" && base.trim().length > 0) block.base = base.trim();
     const embed = (fo as Record<string, unknown>)["embed"];
     if (typeof embed === "boolean") block.embed = embed;
+    // foundry.sync: false keeps the page out of Foundry altogether — no
+    // JournalEntryPage, no derived doc. The page still renders on the wiki.
+    // Unlike `embed`, which only suppresses the article inside a derived
+    // doc's description, this drops the page from the sync set entirely.
+    const sync = (fo as Record<string, unknown>)["sync"];
+    if (typeof sync === "boolean") block.sync = sync;
     const data = (fo as Record<string, unknown>)["data"];
     if (data && typeof data === "object" && !Array.isArray(data)) block.data = data;
     // foundry.id: an explicit Foundry document id for this page. When set,
@@ -1569,9 +1576,10 @@ export interface BodyMeta {
   /**
    * Foundry-instantiation block. `foundry.base` names a template
    * (compendium UUID or `Type[:subtype]`); `foundry.data` is the
-   * deep-merge overlay applied to the resulting doc; `foundry.embed`
-   * (default true) controls whether the page's article auto-embeds
-   * into the doc's description field; `foundry.id` (16 chars [A-Za-z0-9])
+   * deep-merge overlay applied to the resulting doc; `foundry.sync`
+   * (default true) controls whether the page reaches Foundry at all;
+   * `foundry.embed` (default true) controls whether the page's article
+   * auto-embeds into the doc's description field; `foundry.id` (16 chars [A-Za-z0-9])
    * pins both the JournalEntryPage id and the instantiated doc id to
    * an explicit value instead of the SHA1-derived default. Forwarded
    * verbatim to clients — the CLI validates shape but doesn't interpret

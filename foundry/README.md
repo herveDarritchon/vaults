@@ -39,6 +39,7 @@ foundry:
         hp:
           value: 22
   embed: false                                  # optional, default true
+  sync: false                                   # optional, default true — skip Foundry entirely
 ---
 ```
 
@@ -47,6 +48,10 @@ foundry:
 The doc gets a deterministic id derived from `(vault, page path)`, so re-syncs update in place — user edits to non-overridden fields (HP, conditions, equipped items) survive. Page deletion tears down the doc; manually-edited docs are protected by a vault flag.
 
 `foundry.embed: false` skips embedding the page article into the doc description (useful for stats-only or DM-private notes).
+
+`foundry.sync: false` keeps the page out of Foundry entirely — no `JournalEntryPage`, no derived doc, and wikilinks to it from other pages fall back to plain text. The page still renders on the wiki. Use it for material that belongs in the vault but not at the table: toolchain notes, build docs, drafts. Setting it on a page that synced previously deletes its `JournalEntryPage` on the next sync, exactly as if the page had been removed from the vault.
+
+`foundry.embed: false` and `foundry.sync: false` are not the same thing: `embed` only suppresses the article inside a derived doc's description, and the journal page is still created.
 
 `foundry.id` (16 chars `[A-Za-z0-9]`) pins both the `JournalEntryPage` and its instantiated doc to an explicit id. Lets external macros / scene flags reference the doc by a stable known id. Changing it between syncs leaves the previous doc orphaned (the module never auto-deletes manually-pinned ids).
 

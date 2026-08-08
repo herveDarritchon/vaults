@@ -96,16 +96,26 @@ export async function sync(host, vault, { forceFull = false } = {}) {
     Object.assign(vault, patch);
   }
 
-  const remote = new Map(manifest.files.map((f) => [f.path, f.hash]));
+  // `foundry.sync: false` keeps a page out of Foundry entirely. Dropping its
+  // body row here makes the page indistinguishable, to everything below, from
+  // one that was never published: it is never upserted, wikilinks to it fall
+  // back to plain text, and a page that synced before the flag was set lands
+  // in toDelete on the next run. Only `.body.html` rows carry page meta, so
+  // image and asset rows pass through untouched.
+  const files = manifest.files.filter(
+    (f) => !(f.path.endsWith(".body.html") && f.meta?.foundry?.sync === false),
+  );
+
+  const remote = new Map(files.map((f) => [f.path, f.hash]));
   // Per-vault sync state lives behind host.getVaultState, which the host
   // backs with whatever storage it prefers (currently the vaultManifests
   // world setting).
   const lastSync = host.getVaultState(vault.id);
   const local = forceFull ? new Map() : new Map(Object.entries(lastSync.lastManifest || {}));
 
-  const bodyPaths = manifest.files.filter((f) => f.path.endsWith(".body.html")).map((f) => f.path);
-  const pathIndex = buildPathIndex(manifest.files);
-  // Folder info is built from the *full* manifest, not just the changed
+  const bodyPaths = files.filter((f) => f.path.endsWith(".body.html")).map((f) => f.path);
+  const pathIndex = buildPathIndex(files);
+  // Folder info is built from every syncable page, not just the changed
   // subset — trivial-collapse depends on counting every sibling, not only
   // the ones we're about to upsert. Rebuilding each sync is fine; this is a
   // single linear pass over the manifest.
@@ -114,7 +124,7 @@ export async function sync(host, vault, { forceFull = false } = {}) {
   // Per-body reskin metadata (foundry: { base, data, embed }, image URL).
   // Only present on pages that opted in; the rest skip applyReskin entirely.
   const bodyMetaIndex = new Map();
-  for (const f of manifest.files) {
+  for (const f of files) {
     if (f.meta && f.path.endsWith(".body.html")) bodyMetaIndex.set(f.path, f.meta);
   }
 
@@ -126,7 +136,7 @@ export async function sync(host, vault, { forceFull = false } = {}) {
   if (forceFull) await host.setVaultState(vault.id, { lastImageManifest: {} });
   let imageStats = { downloaded: 0, removed: 0, errors: 0 };
   try {
-    imageStats = await syncImages(host, vault, manifest.files);
+    imageStats = await syncImages(host, vault, files);
   } catch (err) {
     console.warn(`Vaults | image sync failed for ${vault.label}:`, err);
   }

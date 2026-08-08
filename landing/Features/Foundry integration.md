@@ -23,6 +23,7 @@ Scene, etc.) by adding a `foundry:` block to frontmatter.
 | Audio / PDFs / other files | Downloaded alongside images |
 | `foundry.base: <UUID>` | New `Actor` or `Item` cloned from the template (see below) |
 | `foundry.base: <Type>[:<subtype>]` | Blank `Actor` / `Item` / `Scene` / `JournalEntry` / `RollTable` / `Macro` / `Cards` / `Playlist` (see below) |
+| `foundry.sync: false` | Skip this page entirely: no `JournalEntry`, no derived doc (see below) |
 | `foundry.embed: false` | Skip auto-embedding the page article into the doc's description field |
 | `foundry.data` | Deep-merge overlay applied to the resulting document. `"@vault/PATH"` strings are rewritten on sync to a local cache URL (`worlds/<id>/vaults-cache/<vault-id>/PATH`) |
 | `foundry.data_json` | Vault-relative path to a JSON file deep-merged into the doc *before* `foundry.data` (use for exported sheets / community-shared dumps) |
@@ -263,3 +264,39 @@ Force-sync after changing `dmRole` to re-wrap previously-imported pages.
 > There is a known Foundry bug where secrets do not work on documents owned by a non-GM user. This isn't typically an issue with imported Journal Entries since they default to GM ownership (players get read access via the OBSERVER role), but it can cause problems if you change ownership or (more likey), a page is Embedded into an Actor/Item sheet that is owned by a non-GM. Be careful about this!
 
 For pages that *shouldn't* leak their article into the actor sheet, DM-private notes, or stats-only pages where the embed adds nothing, set `foundry.embed: false`. The clone / blank doc still gets created with the right name, image, and `foundry.data` overlay. Only the description field is left at whatever the template (or blank) had.
+
+---
+
+## Keeping a page out of Foundry with `foundry.sync: false`
+
+By default every page in a synced variant becomes a `JournalEntryPage`. Some
+pages have no business at the table: toolchain notes, build documentation,
+drafts, anything that is *about* the vault rather than *in* the world.
+
+```yaml
+---
+title: Toolchain reference
+foundry:
+  sync: false
+---
+```
+
+The page still renders on the wiki like any other. It simply never reaches
+Foundry: no `JournalEntry`, no `JournalEntryPage`, no derived document even if
+the page also declares a `foundry.base`. Wikilinks pointing at it from other
+pages fall back to plain text rather than dangling `@UUID[…]` enrichers.
+
+> [!warning] Not the same as `embed: false`
+> `foundry.embed: false` only suppresses the article inside a derived
+> document's description. The journal page is still created. `foundry.sync:
+> false` is the one that keeps the page out altogether.
+
+Setting the flag on a page that already synced **deletes** its
+`JournalEntryPage` on the next sync, treating it exactly like a page removed
+from the vault. That is usually what you want, but it is a deletion: if you
+hand-edited that journal page in Foundry, copy anything worth keeping first.
+
+The alternative is `ignore:` in `settings.md`, which drops the page from the
+build entirely so it reaches neither the wiki nor Foundry. Reach for `ignore:`
+when the file is not content at all; reach for `foundry.sync: false` when it
+belongs on the wiki but not in the world.
