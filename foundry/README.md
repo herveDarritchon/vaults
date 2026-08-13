@@ -40,6 +40,7 @@ foundry:
           value: 22
   embed: false                                  # optional, default true
   sync: false                                   # optional, default true — skip Foundry entirely
+  journal: false                                # optional, default true — doc only, no journal page
 ---
 ```
 
@@ -51,7 +52,9 @@ The doc gets a deterministic id derived from `(vault, page path)`, so re-syncs u
 
 `foundry.sync: false` keeps the page out of Foundry entirely — no `JournalEntryPage`, no derived doc, and wikilinks to it from other pages fall back to plain text. The page still renders on the wiki. Use it for material that belongs in the vault but not at the table: toolchain notes, build docs, drafts. Setting it on a page that synced previously deletes its `JournalEntryPage` on the next sync, exactly as if the page had been removed from the vault.
 
-`foundry.embed: false` and `foundry.sync: false` are not the same thing: `embed` only suppresses the article inside a derived doc's description, and the journal page is still created.
+`foundry.journal: false` makes the derived document *without* the `JournalEntryPage` that normally accompanies it. For pages that exist to carry a Scene or an Actor and whose article adds nothing to the sidebar. Setting it on a page that already synced deletes its journal page on the next sync, so it is not a one-way door. The article still renders on the wiki, and the description embed is suppressed automatically — there would be no page left to point at.
+
+The three are independent: `sync` drops everything, `journal` drops only the page, `embed` drops only the article inside the doc's description. `foundry.embed: false` and `foundry.sync: false` are not the same thing: `embed` only suppresses the article inside a derived doc's description, and the journal page is still created.
 
 `foundry.id` (16 chars `[A-Za-z0-9]`) pins both the `JournalEntryPage` and its instantiated doc to an explicit id. Lets external macros / scene flags reference the doc by a stable known id. Changing it between syncs leaves the previous doc orphaned (the module never auto-deletes manually-pinned ids).
 

@@ -125,3 +125,37 @@ describe("foundry.data_json asset staging", () => {
     } finally { await rm(v.dir, { recursive: true, force: true }); }
   });
 });
+
+describe("foundry.data vault refs", () => {
+  it("stages an asset referenced only from the inline data overlay", async () => {
+    // A token ring subject lives in `foundry.data`, not in a data_json file.
+    // Nothing else in the page mentions it, so if this scan misses it the
+    // image never ships and Foundry 404s the token.
+    const page = [
+      "---",
+      "foundry:",
+      "  base: Actor:npc",
+      "  data:",
+      "    prototypeToken:",
+      "      ring:",
+      "        subject:",
+      '          texture: "@vault/attachments/tokens/Ann.token.webp"',
+      "---",
+      "# Ann",
+      "",
+    ].join("\n");
+    const v = await setupVault({
+      "NPCs/Ann.md": page,
+      "attachments/tokens/Ann.token.webp": "x",
+    });
+    try {
+      await build(v);
+      assert.ok(
+        await exists(join(v.out, "attachments/tokens/Ann.token.webp")),
+        "the ring subject should have shipped",
+      );
+    } finally {
+      await rm(v.dir, { recursive: true, force: true });
+    }
+  });
+});

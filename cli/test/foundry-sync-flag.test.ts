@@ -124,3 +124,50 @@ describe("foundry.sync", () => {
     }
   });
 });
+
+describe("foundry.journal", () => {
+  it("forwards journal: false onto the page's manifest meta", async () => {
+    const v = await setupVault({
+      "Scene.md": "---\nfoundry:\n  base: Scene\n  journal: false\n---\n# Scene\n",
+    });
+    try {
+      await build(v);
+      const meta = await metaFor(v, "Scene.body.html");
+      assert.equal(meta?.foundry?.journal, false);
+      assert.equal(meta?.foundry?.base, "Scene", "the doc is still declared");
+    } finally {
+      await rm(v.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is independent of sync, which is the flag that drops the doc too", async () => {
+    const v = await setupVault({
+      "A.md": "---\nfoundry:\n  base: Scene\n  journal: false\n---\n# A\n",
+      "B.md": "---\nfoundry:\n  base: Scene\n  sync: false\n---\n# B\n",
+    });
+    try {
+      await build(v);
+      const a = await metaFor(v, "A.body.html");
+      const b = await metaFor(v, "B.body.html");
+      assert.equal(a?.foundry?.journal, false);
+      assert.ok(!("sync" in (a?.foundry ?? {})), "journal does not imply sync");
+      assert.equal(b?.foundry?.sync, false);
+      assert.ok(!("journal" in (b?.foundry ?? {})), "and sync does not imply journal");
+    } finally {
+      await rm(v.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores a non-boolean value", async () => {
+    const v = await setupVault({
+      "Bad.md": "---\nfoundry:\n  base: Scene\n  journal: \"nope\"\n---\n# Bad\n",
+    });
+    try {
+      await build(v);
+      const meta = await metaFor(v, "Bad.body.html");
+      assert.ok(!("journal" in (meta?.foundry ?? {})), "a string should be dropped");
+    } finally {
+      await rm(v.dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -178,8 +178,16 @@ export async function sync(host, vault, { forceFull = false } = {}) {
     const logicalPath = bodyPath.replace(/\.body\.html$/i, ".md");
     const pageMeta = bodyMetaIndex.get(bodyPath);
     try {
-      const result = await upsertFile(vault, logicalPath, html, pathIndex, pageMeta, folderInfo);
-      if (result === "added") added++; else modified++;
+      // `foundry.journal: false` keeps the article out of the sidebar while
+      // still making whatever the page instantiates. Deleting rather than
+      // simply skipping means setting the flag on a page that already synced
+      // takes its journal page away, instead of leaving it behind for good.
+      if (pageMeta?.foundry?.journal === false) {
+        await deleteFile(vault, logicalPath);
+      } else {
+        const result = await upsertFile(vault, logicalPath, html, pathIndex, pageMeta, folderInfo);
+        if (result === "added") added++; else modified++;
+      }
       // Instantiation (clone or blank) runs after the JournalEntryPage
       // exists so the @Embed[…] in the doc description resolves on first
       // render. Only fires when the page declared foundry.base.

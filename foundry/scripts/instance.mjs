@@ -296,7 +296,9 @@ async function buildOverlay(vault, vaultPath, meta, docName) {
   // actor sheet). Default is true.
   const fm = meta?.foundry;
   const descPath = DESCRIPTION_FIELDS[game.system.id]?.[docName];
-  const embedAuto = fm?.embed !== false;
+  // `journal: false` leaves no page to point at, so the embed would render
+  // as a broken reference on the sheet.
+  const embedAuto = fm?.embed !== false && fm?.journal !== false;
   if (descPath && embedAuto) {
     const eId = await entryId(vault.id, vaultPath);
     const pId = await pageId(vault.id, vaultPath);

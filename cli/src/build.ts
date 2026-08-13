@@ -890,6 +890,7 @@ async function copyKatexAssets(destDir: string): Promise<void> {
  *   foundry:
  *     base: <UUID> | <Type>[:<subtype>]   # required for instantiation
  *     sync: false                           # default true; skip Foundry entirely
+ *     journal: false                        # default true; doc only, no journal page
  *     embed: false                          # default true
  *     data: { … deep-merged into the doc }
  */
@@ -913,6 +914,11 @@ async function collectBodyMeta(p: PageMeta, vaultPath: string): Promise<BodyMeta
     // doc's description, this drops the page from the sync set entirely.
     const sync = (fo as Record<string, unknown>)["sync"];
     if (typeof sync === "boolean") block.sync = sync;
+    // foundry.journal: false makes the derived doc without the JournalEntryPage
+    // that normally accompanies it. For a page that exists to carry a Scene or
+    // an Actor and has no article worth reading in the sidebar.
+    const journal = (fo as Record<string, unknown>)["journal"];
+    if (typeof journal === "boolean") block.journal = journal;
     const data = (fo as Record<string, unknown>)["data"];
     if (data && typeof data === "object" && !Array.isArray(data)) block.data = data;
     // foundry.id: an explicit Foundry document id for this page. When set,
@@ -972,10 +978,12 @@ async function loadDataJson(
   }
 }
 
-/** Collect the `@vault/...` paths referenced inside a page's foundry.data_json
- *  file. A Scene's bulk asset refs (backgrounds, ambient sounds, tiles) live in
- *  that JSON content rather than the page frontmatter, so the per-variant asset
- *  scanners would otherwise never stage them. Returns vault-relative paths. */
+/** Collect the `@vault/...` paths a page's foundry block references, from both
+ *  `foundry.data_json` and `foundry.data`. A Scene's bulk asset refs
+ *  (backgrounds, ambient sounds, tiles) live in that JSON content, and a token's
+ *  ring subject lives in the inline `data` overlay; neither appears anywhere the
+ *  per-variant asset scanners look, so without this they never ship and Foundry
+ *  404s them. Returns vault-relative paths. */
 async function collectDataJsonVaultRefs(
   vaultPath: string,
   fm: Record<string, unknown>,
@@ -983,15 +991,19 @@ async function collectDataJsonVaultRefs(
 ): Promise<string[]> {
   const fo = fm["foundry"];
   if (!fo || typeof fo !== "object" || Array.isArray(fo)) return [];
-  const rel = (fo as Record<string, unknown>)["data_json"];
-  if (typeof rel !== "string" || !rel.trim()) return [];
-  const parsed = await loadDataJson(vaultPath, rel.trim(), pagePath);
-  if (parsed === null) return [];
+  const block = fo as Record<string, unknown>;
   const out: string[] = [];
-  forEachString(parsed, (s) => {
+  const collect = (from: unknown) => forEachString(from, (s) => {
     const path = vaultRefPath(s);
     if (path) out.push(path);
   });
+
+  const rel = block["data_json"];
+  if (typeof rel === "string" && rel.trim()) {
+    const parsed = await loadDataJson(vaultPath, rel.trim(), pagePath);
+    if (parsed !== null) collect(parsed);
+  }
+  collect(block["data"]);
   return out;
 }
 
@@ -1578,6 +1590,8 @@ export interface BodyMeta {
    * (compendium UUID or `Type[:subtype]`); `foundry.data` is the
    * deep-merge overlay applied to the resulting doc; `foundry.sync`
    * (default true) controls whether the page reaches Foundry at all;
+   * `foundry.journal` (default true) controls whether it also gets a
+   * JournalEntryPage, as opposed to only the derived doc;
    * `foundry.embed` (default true) controls whether the page's article
    * auto-embeds into the doc's description field; `foundry.id` (16 chars [A-Za-z0-9])
    * pins both the JournalEntryPage id and the instantiated doc id to
