@@ -54,6 +54,8 @@ const COLLECTION_FOR = {
  *   foundry:
  *     base: <UUID> | <Type>[:<subtype>]   # required to instantiate
  *     embed: true | false                  # optional, default true
+ *     link: doc | journal                  # optional, default journal;
+ *                                          # where wikilinks to this page point
  *     data: { … }                          # optional deep-merge overlay
  *
  * `base` accepts two forms:

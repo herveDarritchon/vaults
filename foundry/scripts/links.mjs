@@ -1,8 +1,12 @@
 // Post-processing for vault-rendered article HTML before it lands in a
 // Foundry journal. Three rewrites happen here:
 //   - <a class="internal-link" href="/Characters/Foo">label</a>
-//       → @UUID[JournalEntry.<id>]{label}    so cross-page links route
-//                                            to the matching journal.
+//       → @UUID[JournalEntry.<id>.JournalEntryPage.<id>]{label}
+//                                            so cross-page links route to
+//                                            the matching journal page, or
+//       → @UUID[Macro.<id>]{label}           to the document the page
+//                                            instantiates when it carries
+//                                            `journal: false` / `link: doc`.
 //   - <img|audio|video src="/path/to/file.ext">
 //       → src="<localFileUrl>"               so media loads from the
 //                                            world's per-vault cache.
@@ -13,7 +17,7 @@
 // Unresolved wikilinks (rendered with `is-unresolved`) keep their markup
 //. Foundry shows them as broken-styled text.
 
-import { entryId, pageId } from "./ids.mjs";
+import { entryId, pageId, instanceId } from "./ids.mjs";
 import { localFileUrl } from "./media.mjs";
 import { CACHED_EXT_RE } from "./parser.mjs";
 import { escapeAttr, escapeHtml, escapeBraces } from "./util.mjs";
@@ -36,14 +40,56 @@ export function buildPathIndex(manifestFiles) {
   // this, a `[[Other Page]]` link would compute the default id and miss the
   // page Foundry actually created.
   const idOverrides = new Map();
+  // Pages whose links should point at the document the page instantiates
+  // rather than at its journal page. Always the case for `journal: false`,
+  // where no journal page exists to link to at all.
+  const docTargets = new Map();
   for (const f of manifestFiles) {
     if (!f.path.endsWith(".body.html")) continue;
     const mdPath = f.path.replace(/\.body\.html$/i, "") + ".md";
     paths.add(mdPath);
-    const override = f.meta?.foundry?.id;
+    const fm = f.meta?.foundry;
+    const override = fm?.id;
     if (typeof override === "string" && override) idOverrides.set(mdPath, override);
+
+    const docName = docNameFromBase(fm?.base);
+    if (docName && (fm?.journal === false || fm?.link === "doc")) {
+      docTargets.set(mdPath, docName);
+    }
   }
-  return { paths, idOverrides };
+  return { paths, idOverrides, docTargets };
+}
+
+/**
+ * `foundry.base` → the document type it creates, without needing a lookup:
+ * a compendium UUID names it in the fourth segment
+ * (`Compendium.<pkg>.<pack>.Actor.<id>`), and a blank-doc base is the type
+ * itself, optionally with a subtype (`Macro`, `Actor:character`).
+ */
+function docNameFromBase(base) {
+  if (typeof base !== "string" || !base) return null;
+  if (base.startsWith("Compendium.")) {
+    const parts = base.split(".");
+    return parts.length >= 5 ? parts[3] : null;
+  }
+  return base.split(":")[0] || null;
+}
+
+/**
+ * The UUID a link to `path` should resolve to. Pages that instantiate a
+ * document and opt out of the journal page address the document directly;
+ * everything else addresses the specific journal page, so a click opens
+ * that page rather than the entry's first one.
+ */
+async function targetUuid(vaultId, path, index) {
+  const docName = index.docTargets?.get(path);
+  if (docName) {
+    const id = index.idOverrides?.get(path) ?? await instanceId(vaultId, path);
+    return `${docName}.${id}`;
+  }
+  const eId = await entryId(vaultId, path);
+  const pId = index.idOverrides?.get(path) ?? await pageId(vaultId, path);
+  return `JournalEntry.${eId}.JournalEntryPage.${pId}`;
 }
 
 /**
@@ -217,10 +263,8 @@ async function rewriteBasesCardLinks(doc, vaultId, index) {
     if (!href.startsWith("/")) continue;
     const path = logicalPathFromHref(href);
     if (!index.paths.has(path)) continue;
-    const eId = await entryId(vaultId, path);
-    const pId = index.idOverrides?.get(path) ?? await pageId(vaultId, path);
     a.classList.add("content-link");
-    a.setAttribute("data-uuid", `JournalEntry.${eId}.JournalEntryPage.${pId}`);
+    a.setAttribute("data-uuid", await targetUuid(vaultId, path, index));
     a.removeAttribute("href"); // Foundry triggers off the data-uuid; an href would re-navigate the page.
     touched = true;
   }
@@ -285,21 +329,17 @@ async function rewriteWikilinks(vaultId, html, index) {
     matches.push({ idx: m.index, length: full.length, kind: "uuid", label, path });
   }
 
-  // Resolve entry + page IDs in parallel for the resolvable matches. Pages
-  // are addressed as `JournalEntry.<eId>.JournalEntryPage.<pId>` so a click
-  // opens the specific page rather than the entry's first page.
+  // Resolve target UUIDs in parallel for the resolvable matches.
   const uuidMatches = matches.filter((r) => r.kind === "uuid");
-  const resolved = await Promise.all(uuidMatches.map(async (r) => ({
-    eId: await entryId(vaultId, r.path),
-    pId: index.idOverrides?.get(r.path) ?? await pageId(vaultId, r.path),
-  })));
-  uuidMatches.forEach((r, i) => { r.eId = resolved[i].eId; r.pId = resolved[i].pId; });
+  const resolved = await Promise.all(
+    uuidMatches.map((r) => targetUuid(vaultId, r.path, index)));
+  uuidMatches.forEach((r, i) => { r.uuid = resolved[i]; });
 
   // Splice from the end so earlier indices stay valid.
   matches.sort((a, b) => b.idx - a.idx);
   for (const r of matches) {
     const replacement = r.kind === "uuid"
-      ? `@UUID[JournalEntry.${r.eId}.JournalEntryPage.${r.pId}]{${escapeBraces(r.label)}}`
+      ? `@UUID[${r.uuid}]{${escapeBraces(r.label)}}`
       : `<span class="vaults-broken">${escapeHtml(r.label)}</span>`;
     html = html.slice(0, r.idx) + replacement + html.slice(r.idx + r.length);
   }

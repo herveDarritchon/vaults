@@ -891,6 +891,7 @@ async function copyKatexAssets(destDir: string): Promise<void> {
  *     base: <UUID> | <Type>[:<subtype>]   # required for instantiation
  *     sync: false                           # default true; skip Foundry entirely
  *     journal: false                        # default true; doc only, no journal page
+ *     link: doc                             # default journal; link to the doc instead
  *     embed: false                          # default true
  *     data: { … deep-merged into the doc }
  */
@@ -919,6 +920,11 @@ async function collectBodyMeta(p: PageMeta, vaultPath: string): Promise<BodyMeta
     // an Actor and has no article worth reading in the sidebar.
     const journal = (fo as Record<string, unknown>)["journal"];
     if (typeof journal === "boolean") block.journal = journal;
+    // foundry.link: "doc" makes wikilinks to this page resolve to the document
+    // it instantiates rather than to its journal page. Implied by
+    // `journal: false`, where there is no journal page to link to.
+    const link = (fo as Record<string, unknown>)["link"];
+    if (link === "doc" || link === "journal") block.link = link;
     const data = (fo as Record<string, unknown>)["data"];
     if (data && typeof data === "object" && !Array.isArray(data)) block.data = data;
     // foundry.id: an explicit Foundry document id for this page. When set,
