@@ -201,7 +201,35 @@ function assembleDoc(page, vault, index) {
         if (desc.chat === undefined)
             desc.chat = "";
     }
+    keyEmbedded(doc, meta.key, String(page.foundry.id));
     return doc;
+}
+/**
+ * Stamp `_key` on embedded documents, which the Foundry CLI requires when
+ * packing and refuses to invent: a document carrying an ActiveEffect without
+ * one fails the whole pack with "Key cannot be null or undefined".
+ *
+ * Keys nest by collection path, so an effect on an item is
+ * `!items.effects!<itemId>.<effectId>`, and an effect on an item *on an actor*
+ * is `!actors.items.effects!<actorId>.<itemId>.<effectId>`.
+ */
+function keyEmbedded(doc, collection, path) {
+    for (const field of ["effects", "items"]) {
+        const entries = doc[field];
+        if (!Array.isArray(entries))
+            continue;
+        for (const entry of entries) {
+            if (!entry || typeof entry !== "object")
+                continue;
+            const child = entry;
+            const id = child._id;
+            if (typeof id !== "string" || !id)
+                continue;
+            const nested = `${collection}.${field}`;
+            child._key = `!${nested}!${path}.${id}`;
+            keyEmbedded(child, nested, `${path}.${id}`);
+        }
+    }
 }
 /** Foundry pack `system` id: explicit `system`, else the required-system relationship. */
 function systemId(manifest) {

@@ -114,20 +114,30 @@ export async function applyInstance(vault, vaultPath, meta) {
   // path-derived SHA1s. Falls back to the deterministic id otherwise.
   const id = typeof fm.id === "string" && fm.id ? fm.id : await instanceId(vault.id, vaultPath);
 
-  // Layer order, low → high precedence: baseData < data_json < overlay.
+  // Layer order, low → high precedence:
+  //   baseData < cover-derived defaults < data_json < overlay.
   // foundry.data (inside overlay) wins so a page can patch fields out
   // of a hand-shared JSON sheet without rewriting the whole file.
   const dataJson = fm.data_json && typeof fm.data_json === "object" && !Array.isArray(fm.data_json)
     ? rewriteVaultPaths(structuredClone(fm.data_json), vault.id)
     : null;
   if (dataJson) await ensureEmbeddedIds(dataJson, vault.id, vaultPath);
-  const overlay = await buildOverlay(vault, vaultPath, meta, docName);
+  const derived = {};
+  const overlay = await buildOverlay(vault, vaultPath, meta, docName, derived);
+  // The cover-derived token texture is a default, so it only applies when
+  // nothing more specific named one.
+  const tokenFloor = derived.tokenTexture
+    && !dataJson?.prototypeToken?.texture?.src
+    && !fm?.data?.prototypeToken?.texture?.src
+    ? { prototypeToken: { texture: { src: derived.tokenTexture } } }
+    : null;
 
   const existing = collection.get(id);
   if (existing) {
     // Update: data_json + overlay applied together, since the existing
     // doc already absorbed the previous data_json on its create.
-    const updatePatch = dataJson ? deepMerge(structuredClone(dataJson), overlay) : overlay;
+    const base = tokenFloor ? deepMerge(structuredClone(tokenFloor), dataJson ?? {}) : dataJson;
+    const updatePatch = base ? deepMerge(structuredClone(base), overlay) : overlay;
     try {
       await existing.update(updatePatch);
     } catch (err) {
@@ -137,6 +147,7 @@ export async function applyInstance(vault, vaultPath, meta) {
   }
 
   // Create: layer data_json onto baseData first, then overlay on top.
+  if (tokenFloor) deepMerge(baseData, tokenFloor);
   if (dataJson) deepMerge(baseData, dataJson);
   baseData._id = id;
   deepMerge(baseData, overlay);
@@ -268,7 +279,7 @@ async function ensureInstanceFolder(vault, docName) {
   }
 }
 
-async function buildOverlay(vault, vaultPath, meta, docName) {
+async function buildOverlay(vault, vaultPath, meta, docName, derived = {}) {
   const overlay = {
     // Prefer the page's frontmatter `title:` over the filename — the wiki
     // already treats title as the page's display name, and a doc named
@@ -284,9 +295,13 @@ async function buildOverlay(vault, vaultPath, meta, docName) {
     if (localImg) {
       overlay.img = localImg;
       // Actors carry a separate prototypeToken texture used when dragging
-      // onto a scene. Keep it in sync so the cloned NPC's token portrait
-      // matches the page's cover.
-      if (docName === "Actor") setPath(overlay, "prototypeToken.texture.src", localImg);
+      // onto a scene. Default it to the page's cover so a plain page gets a
+      // token picture for free — but only as a *default*: it is stamped
+      // under data_json rather than over it, because a hand-authored sheet
+      // that names its own token art means it. A Dynamic Token Ring subject
+      // is cut round and padded; a portrait is not, and dropping a portrait
+      // into the ring is exactly the wrong picture.
+      if (docName === "Actor") derived.tokenTexture = localImg;
     }
   }
 
