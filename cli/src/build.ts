@@ -147,7 +147,11 @@ export async function buildSite(opts: BuildOptions): Promise<BuildResult> {
   console.log(`Scanning ${opts.vaultPath}...`);
   const scanStart = Date.now();
   const allFiles = await scanVault(opts.vaultPath);
-  const ignoreMatchers = settings.values.ignore.map((p) => picomatch(p));
+  // `dot: true` because these are *exclusions*. A wildcard that refuses to cross
+  // a leading dot means `tools/**` silently spares `tools/.venv/**` and
+  // `tools/.ruff_cache/**` — the parts an ignore rule most wants gone. Nobody
+  // writes one hoping it will keep the hidden files.
+  const ignoreMatchers = settings.values.ignore.map((p) => picomatch(p, { dot: true }));
   const isIgnored = (path: string) => ignoreMatchers.some((m) => m(path));
   const files = allFiles.filter((f) => f.path !== SETTINGS_FILE && !isIgnored(f.path));
   const ignoredCount = allFiles.length - files.length - 1;

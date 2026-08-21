@@ -60,7 +60,7 @@ const SCHEMA: { [K in keyof Settings]: SettingDef<K> } = {
     default: [],
     type: "string[]",
     description:
-      "Glob patterns of files to skip when rendering and syncing. Examples: 'Templates/**', '*.draft.md', 'Private/**'.",
+      "Glob patterns of files to skip when rendering and syncing. Examples: 'Templates/**', '*.draft.md', 'Private/**'. Wildcards cross hidden segments, so 'tools/**' also covers 'tools/.venv/**'.",
   },
   inline_title: {
     default: true,
