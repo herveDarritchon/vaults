@@ -71,15 +71,27 @@ export async function syncImages(host, vault, manifestFiles) {
   const lastImageManifest = host.getVaultState(vault.id).lastImageManifest;
   const last = new Map(Object.entries(lastImageManifest || {}));
 
+  // The recorded manifest says what we downloaded, not what is still there.
+  // Anyone can delete the cache directory from the filesystem — and has to,
+  // since Foundry gives us no way to sweep orphans — at which point every
+  // hash still matches, nothing is queued, and the vault renders as broken
+  // images until someone knows to force-sync. So the record is only trusted
+  // for files that actually exist.
+  const baseDir = vaultCacheDir(vault.id);
+  const present = await listCached(baseDir, last.keys());
+  const vanished = [...last.keys()].filter((p) => !present.has(p));
+  for (const path of vanished) last.delete(path);
+  if (vanished.length > 0) {
+    console.info(`Vaults | ${vanished.length} cached file(s) are gone from ${baseDir}; re-fetching.`);
+  }
+
   const toDownload = [];
   for (const [path, hash] of remoteImages) {
     if (last.get(path) !== hash) toDownload.push(path);
   }
-  const toDelete = [...last.keys()].filter((p) => !remoteImages.has(p));
+  let toDelete = [...last.keys()].filter((p) => !remoteImages.has(p));
 
   if (toDownload.length === 0 && toDelete.length === 0) return { downloaded: 0, removed: 0, errors: 0 };
-
-  const baseDir = vaultCacheDir(vault.id);
 
   // Foundry's FilePicker.createDirectory creates exactly one level at a
   // time; if the parent doesn't exist the call ENOENTs out. We therefore
@@ -105,6 +117,7 @@ export async function syncImages(host, vault, manifestFiles) {
     if (segs.length > 0) addChain(`${baseDir}/${segs.join("/")}`);
   }
   await ensureDirs([...dirsNeeded]);
+  await writeCacheMarker(baseDir, vault);
 
   // Batch by cumulative byte size, not just count. A fixed count of large
   // map images base64-inflates the JSON response past the worker's memory
@@ -162,7 +175,17 @@ export async function syncImages(host, vault, manifestFiles) {
     console.warn(`Vaults | ${errors.length} image(s) failed to download:`, errors);
   }
 
+  // Foundry's server exposes exactly three file actions over the `manageFiles`
+  // socket — browseFiles, createDirectory, configurePath. There is no delete.
+  // So orphans cannot be swept, and saying so once is honest where saying it
+  // per file was eight warnings for one unfixable fact. They are harmless:
+  // stale bytes in the cache directory that nothing references any more.
   let removed = 0;
+  if (toDelete.length > 0 && !canDelete()) {
+    console.info(`Vaults | ${toDelete.length} cached image(s) are no longer in the vault. `
+      + `Foundry provides no API to delete files, so they stay in ${baseDir} until removed by hand.`);
+    toDelete = [];
+  }
   for (const path of toDelete) {
     try {
       await deleteFromWorld(baseDir, path);
@@ -290,6 +313,71 @@ async function ensureDirs(paths) {
       if (!/exists|already/i.test(msg)) throw err;
     }
   }
+}
+
+/**
+ * Drop a small file in the cache root saying which vault owns it.
+ *
+ * Vaults registered before ids carried a label are twelve hex characters, and
+ * a world syncing more than one vault gets a directory listing that identifies
+ * nothing. Since the only way to clear orphans is for someone to delete a
+ * directory by hand, "which of these is safe to remove" has to be answerable
+ * without walking both trees over WebDAV to guess from their contents.
+ *
+ * Best-effort: a cache that fails to label itself still works.
+ */
+async function writeCacheMarker(baseDir, vault) {
+  const body = JSON.stringify({
+    label: vault.label ?? null,
+    url: vault.url ?? null,
+    vaultId: vault.id,
+    note: "Cache for one vault. Safe to delete entirely; the next sync re-downloads it.",
+  }, null, 2);
+  try {
+    await uploadToWorld(baseDir, "vault-info.json", new Blob([body], { type: "application/json" }));
+  } catch (err) {
+    console.debug(`Vaults | could not write cache marker in ${baseDir}:`, err?.message || err);
+  }
+}
+
+/**
+ * Which of `paths` are actually on disk under `baseDir`.
+ *
+ * `browseFiles` is one of the three file actions Foundry's server exposes, so
+ * this is cheap and always available — one listing per directory the candidate
+ * paths live in, not one call per file. A directory that isn't there yet
+ * throws, which is the same answer as an empty one.
+ *
+ * Returns vault-relative paths, matching the keys of the image manifest.
+ */
+async function listCached(baseDir, paths) {
+  const byDir = new Map();
+  for (const p of paths) {
+    const segs = p.split("/");
+    segs.pop();
+    const dir = segs.join("/");
+    if (!byDir.has(dir)) byDir.set(dir, []);
+    byDir.get(dir).push(p);
+  }
+
+  const present = new Set();
+  for (const dir of byDir.keys()) {
+    const full = dir ? `${baseDir}/${dir}` : baseDir;
+    let listing;
+    try { listing = await fp().browse("data", full); }
+    catch { continue; }
+    for (const file of listing?.files ?? []) {
+      // Foundry hands these back percent-encoded, and the manifest keys are not.
+      const name = decodeURIComponent(String(file).split("/").pop());
+      present.add(dir ? `${dir}/${name}` : name);
+    }
+  }
+  return present;
+}
+
+/** Whether this Foundry exposes any way to delete a file. As of v14, none does. */
+function canDelete() {
+  return typeof fp().deleteFile === "function";
 }
 
 async function deleteFromWorld(baseDir, path) {
