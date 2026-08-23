@@ -3,6 +3,7 @@
 
 import { SETTINGS, VAULT_DEFAULTS, get, set } from "./settings.mjs";
 import { removeVaultManifest } from "./vault-manifests.mjs";
+import { hexDigest } from "./util.mjs";
 
 /** All registered vaults (a copy; mutate via update/remove). */
 export function listVaults() {
@@ -19,7 +20,7 @@ export async function addVault(partial) {
   const entry = {
     ...VAULT_DEFAULTS,
     ...partial,
-    id: partial.id || newVaultId(),
+    id: partial.id || await newVaultId(partial.url || ""),
     label: partial.label || deriveLabel(partial.url || ""),
     rootFolder: partial.rootFolder || deriveLabel(partial.url || ""),
   };
@@ -54,10 +55,34 @@ function deriveLabel(url) {
   catch { return "Vault"; }
 }
 
-function newVaultId() {
-  // 12 hex chars; enough for collision avoidance, short enough to fit in
+/**
+ * A vault's id, which is also the name of its cache directory under
+ * `worlds/<world>/vaults-cache/`.
+ *
+ * Derived from the URL rather than random, for two reasons. Re-registering a
+ * vault used to mint a fresh id and strand its entire cache — tens or hundreds
+ * of megabytes at a path nothing referenced again, and unreachable, since
+ * Foundry exposes no way to delete files. Deriving it means the same vault
+ * lands on the same directory and reuses what is already downloaded.
+ *
+ * The label is carried in the id for the same reason a directory listing
+ * should be readable: `seylon-wiki-71c13dcb` says which vault it belongs to
+ * where twelve hex characters said nothing, and working out which of two
+ * caches was safe to delete meant walking both over WebDAV.
+ *
+ * Existing vaults keep whatever id they were given — it is stored, and it also
+ * appears in journal flags, so recomputing one would orphan both its cache and
+ * its journals.
+ */
+async function newVaultId(url) {
+  if (!url) {
+    const bytes = new Uint8Array(6);
+    crypto.getRandomValues(bytes);
+    return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // 8 hex of SHA-256 over the URL: stable, and still short enough to sit in
   // file paths and journal-flag values without bloat.
-  const bytes = new Uint8Array(6);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const digest = (await hexDigest("SHA-256", url)).slice(0, 8);
+  const slug = deriveLabel(url).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return slug ? `${slug}-${digest}` : digest;
 }
