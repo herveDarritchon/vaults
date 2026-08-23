@@ -5,7 +5,8 @@
 // re-serialize every vault's full file list to world-settings storage.
 //
 // Shape: a single Object setting keyed by vaultId →
-//   { lastManifest: { [path]: hash }, lastImageManifest: { [path]: hash } }.
+//   { lastManifest: { [path]: hash }, lastImageManifest: { [path]: hash },
+//     lastMediaRefs: { [bodyPath]: [assetPath] } }.
 //
 // One Object setting (vs N per-vault keys) keeps registration cheap. We
 // pay one read of the full map per access, which is fine because access
@@ -13,7 +14,7 @@
 
 import { SETTINGS, get, set } from "./settings.mjs";
 
-const EMPTY = { lastManifest: {}, lastImageManifest: {} };
+const EMPTY = { lastManifest: {}, lastImageManifest: {}, lastMediaRefs: {} };
 
 /** Get the per-vault manifest entry, defaulting to empty maps. */
 export function getVaultManifest(vaultId) {

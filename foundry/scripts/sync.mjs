@@ -128,7 +128,21 @@ export async function sync(host, vault, { forceFull = false } = {}) {
     if (f.meta && f.path.endsWith(".body.html")) bodyMetaIndex.set(f.path, f.meta);
   }
 
-  const toUpsert = bodyPaths.filter((p) => remote.get(p) !== local.get(p));
+  // A page's HTML carries `?v=<hash>` on every image it shows, so that a
+  // changed picture is a changed URL and the browser stops serving the one it
+  // cached. That only works if the page is rewritten when the picture moves —
+  // and an image-only change leaves the body hash alone, so hash-diffing the
+  // bodies would skip exactly the pages that need it. Each page therefore
+  // records which media it referenced last time, and a page is stale when its
+  // body changed *or* any of that media did.
+  //
+  // Read before syncImages runs, since that is what advances the image state.
+  const prevImages = forceFull ? new Map() : new Map(Object.entries(lastSync.lastImageManifest || {}));
+  const lastMediaRefs = lastSync.lastMediaRefs || {};
+  const mediaStale = (bodyPath) =>
+    (lastMediaRefs[bodyPath] || []).some((m) => remote.get(m) !== prevImages.get(m));
+
+  const toUpsert = bodyPaths.filter((p) => remote.get(p) !== local.get(p) || mediaStale(p));
   const toDelete = [...local.keys()].filter((p) => p.endsWith(".body.html") && !remote.has(p));
 
   // Pull any new/changed images first so the freshly-rendered <img src>
@@ -169,6 +183,10 @@ export async function sync(host, vault, { forceFull = false } = {}) {
   // Foundry's data layer doesn't love concurrent JournalEntry.create calls
   // on the same world, and the bottleneck has moved off the network.
   let added = 0, modified = 0, instances = 0;
+  // Carried forward for pages we didn't touch, replaced for the ones we did,
+  // and dropped for pages that left the manifest.
+  const mediaRefs = {};
+  for (const p of bodyPaths) if (lastMediaRefs[p]) mediaRefs[p] = lastMediaRefs[p];
   for (const bodyPath of toUpsert) {
     const html = bodies.get(bodyPath);
     if (html == null) {
@@ -185,7 +203,9 @@ export async function sync(host, vault, { forceFull = false } = {}) {
       if (pageMeta?.foundry?.journal === false) {
         await deleteFile(vault, logicalPath);
       } else {
-        const result = await upsertFile(vault, logicalPath, html, pathIndex, pageMeta, folderInfo);
+        const refs = new Set();
+        const result = await upsertFile(vault, logicalPath, html, pathIndex, pageMeta, folderInfo, refs);
+        mediaRefs[bodyPath] = [...refs];
         if (result === "added") added++; else modified++;
       }
       // Instantiation (clone or blank) runs after the JournalEntryPage
@@ -215,7 +235,7 @@ export async function sync(host, vault, { forceFull = false } = {}) {
     catch (err) { console.warn(`Vaults | delete instance failed for ${logicalPath}:`, err); }
   }
 
-  await host.setVaultState(vault.id, { lastManifest: Object.fromEntries(remote) });
+  await host.setVaultState(vault.id, { lastManifest: Object.fromEntries(remote), lastMediaRefs: mediaRefs });
 
   // Re-place existing entries whose leaf-collapse status changed since
   // the last sync (folder gained/lost subfolders). Cheap pass; only hits

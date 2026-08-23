@@ -57,7 +57,12 @@ export function buildPathIndex(manifestFiles) {
       docTargets.set(mdPath, docName);
     }
   }
-  return { paths, idOverrides, docTargets };
+  // Content hash per cached asset, used to version the URLs written into
+  // journal HTML. See `mediaVersion`.
+  const hashes = new Map();
+  for (const f of manifestFiles) if (f.hash) hashes.set(f.path, f.hash);
+
+  return { paths, idOverrides, docTargets, hashes };
 }
 
 /**
@@ -131,9 +136,9 @@ function decodeHtmlEntities(s) {
  * we wrap unconditionally, even on DM-tier pages: an embedded fragment
  * may surface inside a player-visible parent.
  */
-export async function transformHtmlForFoundry(vault, html, index) {
+export async function transformHtmlForFoundry(vault, html, index, mediaRefs) {
   html = await rewriteWikilinks(vault.id, html, index);
-  html = rewriteMediaSrcs(vault.id, html);
+  html = rewriteMediaSrcs(vault.id, html, index?.hashes, mediaRefs);
   html = rewritePassthroughLinks(vault.id, html);
   html = await applyDomTransforms(html, vault, index);
   return html;
@@ -350,13 +355,32 @@ async function rewriteWikilinks(vaultId, html, index) {
  *  per-vault cache URL. Anything pointing at an external URL or a path
  *  with an extension we don't cache is left alone — Foundry will treat
  *  those as external (which they are). */
-function rewriteMediaSrcs(vaultId, html) {
+function rewriteMediaSrcs(vaultId, html, hashes, mediaRefs) {
   return html.replace(MEDIA_SRC_RE, (full, tag, before, src, after) => {
     if (!src.startsWith("/")) return full;
     const path = decodeURIComponent(src.replace(/^\//, ""));
     if (!CACHED_EXT_RE.test(path)) return full;
-    return `<${tag}${before}src="${escapeAttr(localFileUrl(vaultId, path))}"${after}>`;
+    mediaRefs?.add(path);
+    const url = localFileUrl(vaultId, path) + mediaVersion(hashes, path);
+    return `<${tag}${before}src="${escapeAttr(url)}"${after}>`;
   });
+}
+
+/**
+ * `?v=<hash>` for a cached asset, or "" when the manifest has no hash for it.
+ *
+ * A vault image keeps its path when its content changes, so the browser keeps
+ * serving what it cached under that URL and the page shows the old picture
+ * even though the bytes on disk are already correct. Versioning the URL makes
+ * a changed file a different URL, which is the whole fix.
+ *
+ * Journal HTML only. The same trick on a document image field — an actor's
+ * `img`, a token's `texture.src` — would put a query string somewhere Foundry
+ * treats as a file path, so `instance.mjs` deliberately keeps the bare URL.
+ */
+function mediaVersion(hashes, path) {
+  const hash = hashes?.get(path);
+  return hash ? `?v=${encodeURIComponent(String(hash).slice(0, 12))}` : "";
 }
 
 /** Rewrite the href on `<a class="passthrough-link" href="/...">` (the

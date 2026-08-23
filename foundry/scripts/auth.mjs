@@ -22,5 +22,5 @@ export function tokenInfo(token) {
  *  fresh under the (now-cleared) auth. */
 export async function disconnect(vaultId) {
   await updateVault(vaultId, { token: "", role: "" });
-  await setVaultManifest(vaultId, { lastManifest: {}, lastImageManifest: {} });
+  await setVaultManifest(vaultId, { lastManifest: {}, lastImageManifest: {}, lastMediaRefs: {} });
 }

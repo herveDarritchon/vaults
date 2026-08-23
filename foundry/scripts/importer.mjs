@@ -122,8 +122,8 @@ function isIndexFile(filename) {
  * folder-keyed (see ids.mjs). The first call for a folder creates the
  * entry with the file's page; subsequent calls embed additional pages.
  */
-export async function upsertFile(vault, path, body, index, meta, folderInfo) {
-  let html = await transformHtmlForFoundry(vault, body, index);
+export async function upsertFile(vault, path, body, index, meta, folderInfo, mediaRefs) {
+  let html = await transformHtmlForFoundry(vault, body, index, mediaRefs);
   html = await appendInstanceDocLink(html, vault, path, meta);
 
   const segs = path.split("/");
