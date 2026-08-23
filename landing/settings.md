@@ -8,7 +8,7 @@ image_quality: 85
 # Hard cap (in bytes) on a single file. Larger files are skipped.
 max_file_bytes: 26214400
 
-# Glob patterns of files to skip when rendering and syncing. Examples: 'Templates/**', '*.draft.md', 'Private/**'.
+# Glob patterns of files to skip when rendering and syncing. Examples: 'Templates/**', '*.draft.md', 'Private/**'. Wildcards cross hidden segments, so 'tools/**' also covers 'tools/.venv/**'.
 ignore:
   - README.md
 
