@@ -56,6 +56,8 @@ const COLLECTION_FOR = {
  *     embed: true | false                  # optional, default true
  *     link: doc | journal                  # optional, default journal;
  *                                          # where wikilinks to this page point
+ *     folder: "NPCs/Solaris"               # optional, nested under the
+ *                                          # vault's own sidebar folder
  *     data: { … }                          # optional deep-merge overlay
  *
  * `base` accepts two forms:
@@ -65,8 +67,11 @@ const COLLECTION_FOR = {
  *     blank document of that type. `data` then populates fields. Useful
  *     when no template exists in any compendium — pure homebrew or
  *     bespoke maps/macros/decks.
+ *
+ * Inside `data`, an entry of an `items` array may be `{ uuid, … }` instead of
+ * full item data; see `resolveItemUuids`.
  */
-export async function applyInstance(vault, vaultPath, meta) {
+export async function applyInstance(vault, vaultPath, meta, { forceFull = false } = {}) {
   const fm = meta?.foundry;
   // No foundry block at all → nothing to instantiate.
   if (!fm || typeof fm !== "object") return;
@@ -121,7 +126,10 @@ export async function applyInstance(vault, vaultPath, meta) {
   const dataJson = fm.data_json && typeof fm.data_json === "object" && !Array.isArray(fm.data_json)
     ? rewriteVaultPaths(structuredClone(fm.data_json), vault.id)
     : null;
-  if (dataJson) await ensureEmbeddedIds(dataJson, vault.id, vaultPath);
+  if (dataJson) {
+    await resolveItemUuids(dataJson, vaultPath);
+    await ensureEmbeddedIds(dataJson, vault.id, vaultPath);
+  }
   const derived = {};
   const overlay = await buildOverlay(vault, vaultPath, meta, docName, derived);
   // The cover-derived token texture is a default, so it only applies when
@@ -138,6 +146,10 @@ export async function applyInstance(vault, vaultPath, meta) {
     // doc already absorbed the previous data_json on its create.
     const base = tokenFloor ? deepMerge(structuredClone(tokenFloor), dataJson ?? {}) : dataJson;
     const updatePatch = base ? deepMerge(structuredClone(base), overlay) : overlay;
+    // A GM who drags a doc into their own folder should keep it there, so an
+    // ordinary sync leaves placement alone. A force-sync is the "put it back
+    // the way the vault says" button, and does move it.
+    if (!forceFull) delete updatePatch.folder;
     try {
       await existing.update(updatePatch);
     } catch (err) {
@@ -147,10 +159,14 @@ export async function applyInstance(vault, vaultPath, meta) {
   }
 
   // Create: layer data_json onto baseData first, then overlay on top.
+  const baseItems = Array.isArray(baseData.items) ? baseData.items : null;
   if (tokenFloor) deepMerge(baseData, tokenFloor);
   if (dataJson) deepMerge(baseData, dataJson);
   baseData._id = id;
   deepMerge(baseData, overlay);
+  if (baseItems && baseData.items !== baseItems) {
+    baseData.items = mergeItemsById(baseItems, baseData.items);
+  }
 
   try {
     // keepId: keep our pinned/deterministic _id on the parent doc.
@@ -236,15 +252,36 @@ export async function deleteVaultInstances(vaultId) {
       catch (err) { console.warn(`Vaults | failed to delete ${docName} ${doc.id}:`, err); }
     }
   }
-  // Then the now-empty folders.
+  // Then the now-empty folders, deepest first: `foundry.folder` can nest
+  // subfolders under the vault's root one, and a parent still counting
+  // children would refuse to go.
   for (const docName of BLANK_DOC_TYPES) {
     const fId = await instanceFolderId(vaultId, docName);
-    const folder = game.folders.get(fId);
-    if (!folder || folder.type !== docName) continue;
-    if (folder.contents.length > 0 || folder.children.length > 0) continue;
-    try { await folder.delete(); }
-    catch (err) { console.warn(`Vaults | failed to delete ${docName} folder:`, err); }
+    const root = game.folders.get(fId);
+    if (!root || root.type !== docName) continue;
+    for (const folder of descendantsDepthFirst(root).reverse()) {
+      if (folder.contents.length > 0 || folder.children.length > 0) continue;
+      try { await folder.delete(); }
+      catch (err) { console.warn(`Vaults | failed to delete ${docName} folder:`, err); }
+    }
   }
+}
+
+/**
+ * `root` and every folder beneath it, parents before children, so reversing
+ * the result deletes the deepest first. Walks `game.folders` by parent id
+ * rather than `Folder#children`, whose shape has moved between Foundry
+ * versions; the id relation has not.
+ */
+function descendantsDepthFirst(root) {
+  const out = [];
+  const stack = [root];
+  while (stack.length) {
+    const folder = stack.pop();
+    out.push(folder);
+    stack.push(...game.folders.filter(f => f.folder?.id === folder.id));
+  }
+  return out;
 }
 
 /** Deterministic per-(vault, docType) folder id — same key derivation
@@ -254,29 +291,54 @@ async function instanceFolderId(vaultId, docName) {
 }
 
 /**
- * Ensure a per-vault folder exists for `docName` in its sidebar (Actors,
- * Items, etc.) and return its id. One level only: docs land directly in
- * the vault-named folder; folder-mirror navigation lives in the journal
- * tree. Idempotent — repeated calls return the existing folder.
+ * Ensure the folder a page's instance doc belongs in, and return its id.
+ *
+ * The root is one folder per (vault, docName) in that type's sidebar, named
+ * after the vault. `subPath` ("NPCs/Solaris", from `foundry.folder`) nests
+ * under it. Keeping every vault doc inside that one subtree is what lets the
+ * remove flow find and reclaim them later without guessing.
+ *
+ * Idempotent: folder ids are deterministic, so repeated calls reuse folders
+ * rather than making new ones.
  */
-async function ensureInstanceFolder(vault, docName) {
-  const fId = await instanceFolderId(vault.id, docName);
+async function ensureInstanceFolder(vault, docName, subPath = "") {
+  const rootId = await instanceFolderId(vault.id, docName);
+  const rootName = vault.rootFolder || vault.label || "Vault";
+  if (!await upsertInstanceFolder(rootId, rootName, docName, null, vault)) return null;
+
+  let parentId = rootId;
+  let key = `${vault.id}/__instance__/${docName}`;
+  for (const segment of splitFolderPath(subPath)) {
+    key += `/${segment}`;
+    const fId = await folderId(vault.id, key);
+    if (!await upsertInstanceFolder(fId, segment, docName, parentId, vault)) return parentId;
+    parentId = fId;
+  }
+  return parentId;
+}
+
+/** Create or rename one folder. Returns false when Foundry refused it. */
+async function upsertInstanceFolder(fId, name, docName, parentId, vault) {
   const existing = game.folders.get(fId);
-  const name = vault.rootFolder || vault.label || "Vault";
   if (existing) {
     if (existing.name !== name) {
       try { await existing.update({ name }); }
       catch (err) { console.warn(`Vaults | could not rename ${docName} folder for ${vault.label}:`, err); }
     }
-    return fId;
+    return true;
   }
   try {
-    await Folder.create({ _id: fId, name, type: docName, folder: null }, { keepId: true });
-    return fId;
+    await Folder.create({ _id: fId, name, type: docName, folder: parentId }, { keepId: true });
+    return true;
   } catch (err) {
     console.warn(`Vaults | could not create ${docName} folder for ${vault.label}:`, err);
-    return null;
+    return false;
   }
+}
+
+/** "/NPCs//Solaris/" → ["NPCs", "Solaris"]. Tolerates the slashes authors type. */
+function splitFolderPath(subPath) {
+  return typeof subPath === "string" ? subPath.split("/").map(s => s.trim()).filter(Boolean) : [];
 }
 
 async function buildOverlay(vault, vaultPath, meta, docName, derived = {}) {
@@ -286,7 +348,7 @@ async function buildOverlay(vault, vaultPath, meta, docName, derived = {}) {
     // "Potion of Healing (Mossfoot Brew)" reads better in the Foundry
     // sidebar than "Healing Potion".
     name: meta.title || baseName(vaultPath),
-    folder: await ensureInstanceFolder(vault, docName),
+    folder: await ensureInstanceFolder(vault, docName, meta?.foundry?.folder),
     flags: { [MODULE_ID]: { vaultId: vault.id, path: vaultPath } },
   };
 
@@ -336,6 +398,7 @@ async function buildOverlay(vault, vaultPath, meta, docName, derived = {}) {
   //     (walls, sounds, cards, …) on every re-sync.
   if (fm?.data && typeof fm.data === "object") {
     const cloned = rewriteVaultPaths(structuredClone(fm.data), vault.id);
+    await resolveItemUuids(cloned, vaultPath);
     await ensureEmbeddedIds(cloned, vault.id, vaultPath);
     deepMerge(overlay, cloned);
   }
@@ -417,6 +480,87 @@ async function buildJournalNote(vault, vaultPath, meta) {
  * `_id` manually in the YAML; this walker leaves valid existing _ids alone.
  */
 const VALID_SUBDOC_ID = /^[A-Za-z0-9]{16}$/;
+/**
+ * Expand `{ uuid, ... }` entries in an embedded `items` array into full item
+ * data, so a page can stock a merchant or a statblock from compendium items
+ * without inlining them.
+ *
+ * Inlining is the alternative and it is a bad one: a single spell scroll is
+ * ~3KB of JSON carrying its own activities, uses and damage, so a shop of a
+ * dozen wares is unreadable in frontmatter, and a hand-trimmed copy silently
+ * ships items whose mechanics do not work. Here the compendium supplies the
+ * item and the page supplies only what differs from it:
+ *
+ *   items:
+ *     - uuid: "Compendium.dnd5e.items.Item.rQ6sO7HDWzqMhSI3"
+ *       system: { price: { value: 50, denomination: gp }, quantity: 2 }
+ *
+ * Keys beside `uuid` are deep-merged over the resolved data, exactly like
+ * `foundry.data` merges over its base, so there is no second syntax to learn.
+ * Entries without a `uuid` are left untouched — inline items still work.
+ *
+ * An unresolvable uuid drops that one entry rather than failing the page: a
+ * merchant missing a ware is a better sync than a merchant missing entirely.
+ */
+/**
+ * Merge a page's `items` into the base document's own, keyed by `_id`.
+ *
+ * Arrays otherwise replace wholesale, which would strip a statblock's gear and
+ * spells the moment a page declared any stock of its own — a shopkeeper cloned
+ * from Mage would lose her spell list to four scrolls. Merging by id also lets
+ * a page reach one of the base's own items by `_id` alone, which is how a
+ * merchant hides the shopkeeper's weapon from the shop without restating it:
+ *
+ *   items:
+ *     - _id: mmArcaneBurst000
+ *       flags: { item-piles: { item: { hidden: true } } }
+ *
+ * Foundry's own update path already upserts an embedded collection by id, so
+ * this only has to bring document *creation* into line with it.
+ */
+function mergeItemsById(baseItems, pageItems) {
+  if (!Array.isArray(pageItems)) return baseItems;
+  if (!baseItems.length) return pageItems;
+  const merged = baseItems.map((item) => structuredClone(item));
+  const positionOf = new Map(merged.map((item, i) => [item?._id, i]));
+  for (const item of pageItems) {
+    const at = item && item._id !== undefined ? positionOf.get(item._id) : undefined;
+    if (at === undefined) merged.push(item);
+    else deepMerge(merged[at], item);
+  }
+  return merged;
+}
+
+async function resolveItemUuids(data, vaultPath) {
+  if (!Array.isArray(data?.items)) return;
+  const resolved = [];
+  for (const entry of data.items) {
+    if (!entry || typeof entry !== "object" || typeof entry.uuid !== "string") {
+      resolved.push(entry);
+      continue;
+    }
+    const { uuid, ...overrides } = entry;
+    const source = await safeFromUuid(uuid);
+    if (!source) {
+      console.warn(`Vaults | foundry item uuid: ${vaultPath} → ${uuid} did not resolve; skipping that item.`);
+      continue;
+    }
+    if (source.documentName !== "Item") {
+      console.warn(`Vaults | foundry item uuid: ${vaultPath} → ${uuid} is a ${source.documentName}, not an Item; skipping that item.`);
+      continue;
+    }
+    const itemData = source.toObject();
+    delete itemData._id;
+    // Mirror what a manual compendium import records, so the item keeps a
+    // trail back to its source for Foundry's own update-from-compendium.
+    if (uuid.startsWith("Compendium.")) {
+      itemData._stats = { ...itemData._stats, compendiumSource: uuid };
+    }
+    resolved.push(deepMerge(itemData, overrides));
+  }
+  data.items = resolved;
+}
+
 async function ensureEmbeddedIds(value, vaultId, pagePath, ptr = "") {
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {

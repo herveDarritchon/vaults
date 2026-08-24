@@ -931,6 +931,11 @@ async function collectBodyMeta(p: PageMeta, vaultPath: string): Promise<BodyMeta
     if (link === "doc" || link === "journal") block.link = link;
     const data = (fo as Record<string, unknown>)["data"];
     if (data && typeof data === "object" && !Array.isArray(data)) block.data = data;
+    // foundry.folder: a "/"-separated folder path the instantiated doc is
+    // filed under, nested inside the vault's own sidebar folder. Absent
+    // means the vault folder itself, which is where everything used to land.
+    const folder = (fo as Record<string, unknown>)["folder"];
+    if (typeof folder === "string" && folder.trim().length > 0) block.folder = folder.trim();
     // foundry.id: an explicit Foundry document id for this page. When set,
     // overrides the SHA1-derived id used for both the JournalEntryPage and
     // (if foundry.base is present) the instantiated derived doc. Lets users

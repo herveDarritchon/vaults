@@ -213,7 +213,7 @@ export async function sync(host, vault, { forceFull = false } = {}) {
       // render. Only fires when the page declared foundry.base.
       if (pageMeta?.foundry?.base) {
         try {
-          await applyInstance(vault, logicalPath, pageMeta);
+          await applyInstance(vault, logicalPath, pageMeta, { forceFull });
           instances++;
         } catch (err) {
           console.warn(`Vaults | foundry instantiation failed for ${logicalPath}:`, err);
