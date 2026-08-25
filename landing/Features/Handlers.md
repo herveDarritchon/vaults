@@ -7,7 +7,16 @@ Handlers are small build-time transforms that turn a special markdown form into 
 - **Inline:** `` `prefix: content` ``: a plain inline-code span where the content starts with a registered prefix and a colon.
 - **Code block:** ` ```lang `: a fenced code block whose language tag matches a registered handler.
 
-Vaults currently includes three built-in handlers and lets you add your own under `.vaults/handlers/`.
+Vaults ships six built-in handlers and lets you add your own under `.vaults/handlers/`:
+
+| Handler | Trigger | Demo |
+|---|---|---|
+| `dice` | inline | below |
+| `fm` | inline | below |
+| `fm` | code block | below |
+| `statblock` | code block | [[Statblocks]] |
+| `battlemap` | code block | [[Battlemaps]] |
+| `gallery` | code block | below |
 
 ## Built-in: ``` `dice:` ```
 
@@ -88,6 +97,26 @@ actions:
 ```
 
 Note the `dice:` button inside the action description. Handler descriptions support inline handler chaining, so dice expressions in stat damage rolls click through like everywhere else.
+
+## Built-in: `gallery`
+
+A responsive grid of thumbnails. One image per line, referenced by name the same way a `![[file]]` embed is, with an optional caption after a pipe. Lines starting with `#` are comments.
+
+````
+```gallery
+screenshot-fvtt-actor-aelar-galanodel.webp | Aelar as a dnd5e Actor
+screenshot-fvtt-item-potion-of-healing.webp | The potion as an Item
+screenshot-fvtt-journal-bram-mossfoot.webp | Bram's journal entry
+```
+````
+
+```gallery
+screenshot-fvtt-actor-aelar-galanodel.webp | Aelar as a dnd5e Actor
+screenshot-fvtt-item-potion-of-healing.webp | The potion as an Item
+screenshot-fvtt-journal-bram-mossfoot.webp | Bram's journal entry
+```
+
+Images resolve through the same index as `![[ ]]` embeds, so anything a gallery names is staged into the deploy and gated per role like any other image.
 
 ## Writing a custom handler
 

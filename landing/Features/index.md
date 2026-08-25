@@ -18,6 +18,10 @@ the underlying markdown.
 | [[Foundry integration]] | Sync to Foundry VTT, `foundry.base` clones, dmRole gating |
 | [[Passthrough files]] | Audio/video/PDF/EPUB including with per-variant role gating |
 | [[Patreon login]] | Optional OAuth overlay: link roles to Patreon tiers so patrons sign in directly |
+| [[OIDC login]] | Single sign-on against any OIDC issuer, with roles granted by email or domain |
+| [[Math]] | `$inline$` and `$$display$$` LaTeX, rendered at build time with KaTeX |
+| [[Battlemaps]] | Layered, multi-level maps with a grid overlay and PNG export |
+| [[Foundry module compiler]] | Bake a vault into an installable Foundry module with real compendium packs |
 
 Other features that don't need a dedicated page:
 
@@ -46,3 +50,9 @@ Other features that don't need a dedicated page:
   `target="_blank" rel="noopener"` so visitors don't lose their place.
 - **Obsidian snippets**: `.obsidian/snippets/*.css` files ride to the
   deploy as `user.css`, loaded after the default theme.
+- **Page transclusion**: `![[Some Page]]` on its own line inlines that
+  page's rendered body; `![[Some Page#Section]]` inlines one section.
+  See [[Wikilinks]].
+- **Schema migrations**: `vaults migrate` applies pending vault layout
+  changes when the CLI's internal format moves. `--list` shows what
+  exists, `--dry-run` shows what would change.

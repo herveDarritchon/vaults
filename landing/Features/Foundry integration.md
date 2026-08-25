@@ -25,6 +25,9 @@ Scene, etc.) by adding a `foundry:` block to frontmatter.
 | `foundry.base: <Type>[:<subtype>]` | Blank `Actor` / `Item` / `Scene` / `JournalEntry` / `RollTable` / `Macro` / `Cards` / `Playlist` (see below) |
 | `foundry.sync: false` | Skip this page entirely: no `JournalEntry`, no derived doc (see below) |
 | `foundry.embed: false` | Skip auto-embedding the page article into the doc's description field |
+| `foundry.journal: false` | Instantiate the derived doc but keep the article out of the journal sidebar. An Actor or Scene that needs no wiki entry of its own |
+| `foundry.link` | `journal` (default) or `doc`: where wikilinks to this page point. `doc` sends them at the instantiated document instead of its journal page. Implied by `journal: false` |
+| `foundry.folder` | A `/`-separated folder path the instantiated doc is filed under, nested inside the vault's own sidebar folder. Absent means the vault folder itself |
 | `foundry.data` | Deep-merge overlay applied to the resulting document. `"@vault/PATH"` strings are rewritten on sync to a local cache URL (`worlds/<id>/vaults-cache/<vault-id>/PATH`) |
 | `foundry.data_json` | Vault-relative path to a JSON file deep-merged into the doc *before* `foundry.data` (use for exported sheets / community-shared dumps) |
 | `foundry.id` | 16-char `[A-Za-z0-9]` Foundry id pinned for this page's `JournalEntryPage` and (if `foundry.base` is set) its instantiated doc |

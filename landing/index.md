@@ -30,8 +30,12 @@ Wizzlethorpe Vaults is a tool that turns an Obsidian vault into a self-hosted, r
 | Callouts | [[Features/Callouts]] |
 | Images & cover discovery | [[Features/Images]] |
 | Bases (filtered/sorted views over your notes) | [[Features/Bases]] |
+| Math (KaTeX) | [[Features/Math]] |
+| Battlemaps | [[Features/Battlemaps]] |
 | Role gating | [[Features/Role gating]] |
+| Sign-in via Patreon or OIDC | [[Features/Patreon login]], [[Features/OIDC login]] |
 | Foundry VTT integration | [[Features/Foundry integration]] |
+| Compiling a vault into a Foundry module | [[Features/Foundry module compiler]] |
 | Frontmatter dialog | the `{}` button in the top-right of every page |
 | Per-page social-card meta | view source on any page → `og:image`, `og:title`, etc. |
 

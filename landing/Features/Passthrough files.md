@@ -21,16 +21,19 @@ target variant matches one, the file includes to that variant:
 
 ```markdown
 ![[file.ogg]]                  # Obsidian embed (audio plays inline)
+![[clip.mp4]]                  # video embed (<video controls>)
 [[file.ogg]]                   # Obsidian wikilink
 [label](path/to/file.pdf)      # standard markdown link
 ```
+
+Audio and video embeds become real `<audio controls>` / `<video controls>` players. Any other passthrough (PDF, EPUB, JSON) embeds as a plain link to the file.
 
 If you want an audio file gated to the DM tier, just reference it from a
 DM-only page (or a DM-only callout). The build does the rest.
 
 ## Example
 
-This page links to [mossfoot-tavern.ogg](../Audio/mossfoot-tavern.ogg), a 1.4 MB tavern ambience loop (mixed from the Sonniss GDC library via the workspace's audio-mixer tool). Because this page is `public` (no `role:` frontmatter override), the file includes to all three deploy variants.
+This page links to [mossfoot-tavern.ogg](../Audio/mossfoot-tavern.ogg), a 1.4 MB tavern ambience loop (mixed from the Sonniss GDC library). Because this page is `public` (no `role:` frontmatter override), the file includes to all three deploy variants.
 
 ![[mossfoot-tavern.ogg]]
 

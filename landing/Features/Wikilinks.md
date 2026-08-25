@@ -49,6 +49,19 @@ The same syntax with a leading `!` embeds an image:
 
 ![[aelar-portrait.webp|180]]
 
+## Page transclusion
+
+An embed whose target is a page rather than a file pulls that page's rendered body inline. Put it on a line of its own:
+
+```markdown
+![[Bram]]              # the whole page
+![[Statblocks#Spellcasting]]   # just that section
+```
+
+Transcluded pages are themselves rendered, so their wikilinks, handlers, and embeds all work. Nesting is capped at three levels, which stops two pages that embed each other from looping.
+
+Role gating applies to the *source* page: a transclusion of a page above the reader's tier renders as a broken embed, exactly like a link to it.
+
 ## Cross-tier behavior
 
 Wikilinks to pages above your role tier render as **broken** rather than
