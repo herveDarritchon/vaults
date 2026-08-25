@@ -378,7 +378,7 @@ export async function buildSite(opts: BuildOptions): Promise<BuildResult> {
   // One combined hash keeps it simple; any shared-asset change busts all.
   // katex version rides in the hash so a dependency upgrade re-fetches the
   // (otherwise never-changing) /katex/katex.min.css on math pages.
-  const katexVersion = createRequire(import.meta.url)("katex/package.json").version as string;
+  const katexVersion = katexRequire()("katex/package.json").version as string;
   const assetVersion = createHash("md5")
     .update(DEFAULT_CSS + themeOverride + userCss + handlerAssets.js + handlerAssets.css + katexVersion)
     .digest("hex")
@@ -867,13 +867,27 @@ async function buildVariant(a: VariantArgs): Promise<VariantStats> {
 }
 
 /**
- * Copy KaTeX's stylesheet and fonts (from the katex package dependency) to
+ * Resolve the katex package that *rehype-katex* renders with, which is not
+ * necessarily this package's own katex dependency: under pnpm's isolated
+ * node_modules, rehype-katex gets the copy matching its own range. The
+ * stylesheet has to come from that copy, because KaTeX renames its CSS
+ * classes between versions ('sizing' became 'katex-sizing' in 0.18), and a
+ * stylesheet from a different version silently stops matching the markup:
+ * subscripts render at full size instead of 0.7em.
+ */
+function katexRequire(): NodeRequire {
+  const here = createRequire(import.meta.url);
+  return createRequire(here.resolve("rehype-katex"));
+}
+
+/**
+ * Copy KaTeX's stylesheet and fonts (from the katex rehype-katex uses) to
  * <outputDir>/katex/. woff2 only: the CSS lists woff2 first, so any browser
  * that supports it (all modern ones) never requests the woff/ttf fallbacks.
  */
 async function copyKatexAssets(destDir: string): Promise<void> {
   const distDir = join(
-    dirname(createRequire(import.meta.url).resolve("katex/package.json")),
+    dirname(katexRequire().resolve("katex/package.json")),
     "dist",
   );
   await mkdir(join(destDir, "fonts"), { recursive: true });
