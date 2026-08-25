@@ -13,7 +13,54 @@ import { upsertFile, deleteFile, buildFolderInfo, reconcileEntryPlacement, recon
 import { buildPathIndex } from "./links.mjs";
 import { syncImages } from "./media.mjs";
 import { applyInstance, deleteInstance } from "./instance.mjs";
+import { instanceId } from "./ids.mjs";
 import { tokenInfo } from "./auth.mjs";
+
+// `foundry.base` may name a world document another page instantiates
+// (`base: Actor.<id>`), which lets one page reskin another's statblock.
+// Cloning reads the template at create time, so the template has to exist
+// first. Processed the wrong way round, the clone finds nothing, warns, and
+// the page stays uninstantiated until some later sync happens to touch it
+// again. Ordering the batch removes the dependence on manifest order.
+//
+// Stable by construction: pages with no such dependency keep their original
+// position, and a dependency cycle degrades to the original order rather
+// than looping.
+async function orderByBaseDeps(vault, paths, bodyMetaIndex) {
+  // Which page in this batch creates which world document.
+  const ownerOf = new Map();
+  for (const p of paths) {
+    const fm = bodyMetaIndex.get(p)?.foundry;
+    if (!fm?.base) continue;
+    const id = typeof fm.id === "string" && fm.id
+      ? fm.id
+      : await instanceId(vault.id, p.replace(/\.body\.html$/i, ".md"));
+    ownerOf.set(id, p);
+  }
+  if (!ownerOf.size) return paths;
+
+  // page -> the page whose document it clones, when that page is in this batch.
+  const dependsOn = new Map();
+  for (const p of paths) {
+    const base = bodyMetaIndex.get(p)?.foundry?.base;
+    const match = typeof base === "string" && base.match(/^(?:Actor|Item)\.([A-Za-z0-9]{16})$/);
+    const from = match && ownerOf.get(match[1]);
+    if (from && from !== p) dependsOn.set(p, from);
+  }
+  if (!dependsOn.size) return paths;
+
+  const ordered = [];
+  const placed = new Set();
+  const visit = (p, chain) => {
+    if (placed.has(p) || chain.has(p)) return;
+    chain.add(p);
+    const from = dependsOn.get(p);
+    if (from) visit(from, chain);
+    if (!placed.has(p)) { placed.add(p); ordered.push(p); }
+  };
+  for (const p of paths) visit(p, new Set());
+  return ordered;
+}
 
 /**
  * @returns A SyncResult shape consumed by the host:
@@ -142,7 +189,8 @@ export async function sync(host, vault, { forceFull = false } = {}) {
   const mediaStale = (bodyPath) =>
     (lastMediaRefs[bodyPath] || []).some((m) => remote.get(m) !== prevImages.get(m));
 
-  const toUpsert = bodyPaths.filter((p) => remote.get(p) !== local.get(p) || mediaStale(p));
+  const changed = bodyPaths.filter((p) => remote.get(p) !== local.get(p) || mediaStale(p));
+  const toUpsert = await orderByBaseDeps(vault, changed, bodyMetaIndex);
   const toDelete = [...local.keys()].filter((p) => p.endsWith(".body.html") && !remote.has(p));
 
   // Pull any new/changed images first so the freshly-rendered <img src>

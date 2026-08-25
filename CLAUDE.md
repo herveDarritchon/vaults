@@ -16,7 +16,7 @@ A monorepo for letting people self-host an Obsidian vault as a static wiki on Cl
 vaults/                      this repo (single git history)
 ├── README.md
 ├── CLAUDE.md                this file
-├── TODO.md                  working notes
+├── ROADMAP.md               where this is going, and why
 ├── LICENSE
 ├── package.json             root workspace manifest
 ├── pnpm-workspace.yaml

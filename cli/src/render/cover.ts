@@ -32,7 +32,7 @@ export function resolvePageImage(
   if (typeof fmImage === "string" && fmImage.length > 0) {
     raw = fmImage;
   } else if (autoImage) {
-    const m = FIRST_IMAGE_RE.exec(source);
+    const m = FIRST_IMAGE_RE.exec(withoutCode(source));
     if (m) raw = m[1] ?? m[2] ?? null;
   }
   if (!raw) return null;
@@ -47,4 +47,26 @@ export function resolvePageImage(
   // Already a vault-relative path that wasn't compressed (rare: SVG, or
   // `image: attachments/foo.svg`); serve as-is.
   return "/" + raw.split("/").map(encodeURIComponent).join("/");
+}
+
+// Embed syntax written *about* embeds is not an embed. Documentation pages
+// routinely carry `![[portrait.png]]` inside a code span or fence to describe
+// a field, and picking that up as the page's cover yields an og:image pointing
+// at a file the vault doesn't have. Blank both forms out before the scan.
+function withoutCode(source: string): string {
+  const kept: string[] = [];
+  let fence: string | null = null;
+  for (const line of source.split("\n")) {
+    const opener = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence !== null) {
+      if (opener && line.trim().startsWith(fence)) fence = null;
+      continue;
+    }
+    if (opener) {
+      fence = opener[1]!;
+      continue;
+    }
+    kept.push(line.replace(/`[^`\n]*`/g, ""));
+  }
+  return kept.join("\n");
 }
