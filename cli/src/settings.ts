@@ -22,7 +22,7 @@ export interface Settings {
   center_images: boolean;
   preview_mode: string;
   preview_mode_mobile: string;
-  default_role: string;
+  foundry_player_role: string;
   accent_color: string;
   bg_color: string;
   accent_color_dark: string;
@@ -91,7 +91,11 @@ const SCHEMA: { [K in keyof Settings]: SettingDef<K> } = {
     description: "Hard cap (in bytes) on a single file. Larger files are skipped.",
   },
   default_frontmatter: {
-    default: [],
+    // A page with no `role:` is public, which is what `default_role` used to
+    // say in a setting of its own. A rule says it in the vocabulary everything
+    // else already uses, and a vault that wants the opposite polarity edits
+    // this one line rather than learning a second mechanism.
+    default: [{ match: "**", data: { role: "public" } }],
     type: "rules",
     description:
       "Frontmatter applied to pages that match a glob, before anything else reads them. "
@@ -138,11 +142,11 @@ const SCHEMA: { [K in keyof Settings]: SettingDef<K> } = {
     description:
       "Internal-link preview behavior on touch (mobile) devices, where there is no hover: 'sticky' (the default) shows a preview on tap with a 'Go to page' link instead of navigating; 'none' disables previews so taps just navigate. ('normal' has no hover to trigger it on touch and behaves like 'none'.)",
   },
-  default_role: {
+  foundry_player_role: {
     default: "",
     type: "string",
     description:
-      "Role assigned to pages with no 'role:' frontmatter. Empty string means the lowest-tier role (typically 'public'). Set to e.g. 'dm' for a private-by-default vault. Must be one of your configured roles.",
+      "The highest role your Foundry players are allowed to read. Pages at this role or below import as player-visible (Observer ownership); everything above stays GM-only. Empty string (the default) means none of it is player-visible. Set it to your lowest tier, usually 'public', to share exactly what the wiki shows a signed-out visitor. Must be one of your configured roles. Role-gated callouts above this tier are also hidden inside pages players can see.",
   },
   accent_color: {
     default: "",

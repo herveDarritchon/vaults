@@ -345,20 +345,26 @@ This is set on every sync, not left to Foundry. An unconfigured world pack is re
 
 Roles still work, in the world where Foundry can enforce them. Each document carries the ownership its page's role earned it, and Import All preserves that, so a `role: public` page lands player-visible and a `role: dm` page lands GM-only. Dragging a single document out is the exception: Foundry clears ownership on that path, and the document arrives GM-only whatever its role.
 
-## Per-vault dmRole setting
+## `foundry_player_role`: what your players can read
 
-Multi-role vaults (this one, for example) can pick a "DM cutoff" in the
-Foundry module's per-vault settings. Pages whose role is **below the
-cutoff** import as `OBSERVER` ownership (player-visible journals). Pages
-**at or above** stay GM-only. A vault running this rule with `dmRole: dm`:
+Set it in `settings.md` to the **highest role your Foundry players are allowed to read**. Pages at that role or below import as `OBSERVER` ownership (player-visible); everything above stays GM-only. Leave it empty, the default, and none of the vault is player-visible.
+
+```yaml
+foundry_player_role: public
+```
+
+A vault with roles `public`, `patron`, `dm` running that setting:
 
 | Page | Role | Foundry ownership |
 |---|---|---|
 | [[Aelar]] | public | `default: OBSERVER` (players can read) |
-| [[Witchwood Cult]] | patron | `default: OBSERVER` |
+| [[Witchwood Cult]] | patron | GM-only |
 | [[Hidden Caves]] | dm | GM-only |
 
-Set this in the per-vault settings dialog after the first sync.
+Set it to `patron` instead and the middle row becomes player-visible too. The named tier is one players *can* read, not the first they cannot.
+
+> [!note] This used to be a per-vault setting in the Foundry module
+> It was called `dmRole`, it named the first *secret* tier rather than the last readable one, and each GM set it themselves. Which pages are player-facing is a fact about the vault's content, so the vault says it — once, in `settings.md`, where the roles are already configured — and every reader who syncs it gets the same answer.
 
 ### Hiding role-gated callouts inside player-visible pages
 
@@ -368,7 +374,7 @@ themselves. Without protection, players viewing the journal would see those
 callouts even though the wiki strips them at lower tiers.
 
 The module solves this by wrapping each role-gated callout whose tier is
-**at-or-above** the configured `dmRole` in a `<section class="secret">`
+**above** `foundry_player_role` in a `<section class="secret">`
 block during sync. Foundry's renderer hides secret sections from non-GMs
 at view time, so:
 
@@ -388,7 +394,7 @@ Same gate applies to Actor / Item descriptions that embed the journal page
 via `@Embed[…]`: the embed expansion fans out through the page's HTML, so
 secret sections inside it stay secret in the doc sheet too.
 
-Force-sync after changing `dmRole` to re-wrap previously-imported pages.
+Force-sync after changing `foundry_player_role` to re-wrap previously-imported pages.
 
 > [!warning] WARNING
 > There is a known Foundry bug where secrets do not work on documents owned by a non-GM user. This isn't typically an issue with imported Journal Entries since they default to GM ownership (players get read access via the OBSERVER role), but it can cause problems if you change ownership or (more likey), a page is Embedded into an Actor/Item sheet that is owned by a non-GM. Be careful about this!

@@ -532,8 +532,9 @@ export async function buildFoundryModule(opts: ModuleOptions): Promise<ModuleRes
   const cfg = await loadConfig(opts.vaultPath, {});
   const roles = cfg.roles.length > 0 ? cfg.roles : ["public"];
   const settings = await loadSettings(opts.vaultPath);
-  const configuredDefault = String(settings.values.default_role ?? "");
-  const defaultRole = roles.includes(configuredDefault) ? configuredDefault : roles[0]!;
+  // Pages carry their own role by the time they reach here, supplied by
+  // `default_frontmatter` where they stated none. This is the floor.
+  const defaultRole = roles[0]!;
   const declaredRoles = flags["vaults"]?.["roles"];
   const allowedRoles = new Set(
     Array.isArray(declaredRoles) && declaredRoles.length > 0

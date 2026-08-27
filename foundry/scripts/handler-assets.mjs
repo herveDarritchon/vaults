@@ -1,6 +1,6 @@
 // Per-vault handler-asset import. Two-layer consent: a handler author opts
 // its assets into Foundry import via assets.targets.foundry.{styles,scripts} on the
-// CLI side; a GM enables importHandlerStyles / importHandlerScripts in the
+// CLI side; a handler author opts each asset in, and scripts prompt in the
 // per-vault settings dialog. This module fetches and injects only when both
 // gates allow it.
 //
@@ -42,12 +42,19 @@ const SCRIPT_ATTR = "data-vault-handler-scripts";
 const sessionApprovedScripts = new Set();
 
 /**
- * Inject handler assets for a vault without prompting. The persistent
- * `importHandlerStyles` / `importHandlerScripts` toggles are the only
- * gates; if they're on, the asset is fetched and injected. Used from
- * world ready (the GM consented before the reload) and from settings
- * save (the GM is actively in the dialog and has just acknowledged the
- * one-time warning when flipping a toggle on).
+ * Inject handler assets for a vault without prompting.
+ *
+ * A vault's handler assets are part of the vault. They were behind two
+ * per-vault checkboxes, defaulting off, and that was the wrong shape: a
+ * handler's CSS is what makes its output look like anything, so a vault whose
+ * author shipped assets rendered wrongly until a GM found a setting they had
+ * no reason to look for. Almost every "off" was an accident rather than a
+ * decision.
+ *
+ * What remains is the gate that matters. A handler author still has to opt in
+ * per asset (`assets.targets.foundry.{styles,scripts}`), and scripts still
+ * prompt once per session before running — that is the real consent, asked at
+ * the moment the code would run, naming the vault it came from.
  */
 export async function applyHandlerAssets(vault) {
   if (!vault?.id || !vault?.url) return;
@@ -57,13 +64,13 @@ export async function applyHandlerAssets(vault) {
   const cssPath = vault.handlerAssetPaths?.foundryCss;
   const jsPath = vault.handlerAssetPaths?.foundryJs;
 
-  if (vault.importHandlerStyles && cssPath) {
+  if (cssPath) {
     const css = await fetchTextOrNull(vault, cssPath);
     injectStyle(vault.id, css);
   } else {
     removeStyle(vault.id);
   }
-  if (vault.importHandlerScripts && jsPath) {
+  if (jsPath) {
     const js = await fetchTextOrNull(vault, jsPath);
     injectScript(vault.id, js);
     // A silent inject still primes the per-session cache — if a sync
@@ -91,16 +98,17 @@ export async function applyHandlerAssetsWithConfirm(vault, opts = {}) {
   const cssPath = vault.handlerAssetPaths?.foundryCss;
   const jsPath = vault.handlerAssetPaths?.foundryJs;
 
-  // CSS: no prompt.
-  if (vault.importHandlerStyles && cssPath) {
+  // CSS: no prompt. At worst it restyles a journal sheet.
+  if (cssPath) {
     const css = await fetchTextOrNull(vault, cssPath);
     injectStyle(vault.id, css);
   } else {
     removeStyle(vault.id);
   }
 
-  // JS: prompt unless already approved this session.
-  if (vault.importHandlerScripts && jsPath) {
+  // JS: prompt unless already approved this session. This is the consent that
+  // matters — asked when the code would run, naming the vault it came from.
+  if (jsPath) {
     const js = await fetchTextOrNull(vault, jsPath);
     if (!js) {
       removeScript(vault.id);

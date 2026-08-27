@@ -115,8 +115,9 @@ function decodeHtmlEntities(s) {
  * Rewrite an article body so it's safe to drop into a JournalEntryPage of
  * the given vault. `index` comes from buildPathIndex().
  *
- * When the vault has a dmRole configured, role-gated callouts whose role
- * is at-or-above the dmRole get wrapped in <section class="secret">.
+ * Role-gated callouts above the vault's `foundry_player_role` get wrapped in
+ * <section class="secret">, so a page players can read does not show them the
+ * asides written for the GM.
  * Foundry's renderer hides secret sections from non-GMs at view time, so
  * a player never sees DM callouts on a journal they otherwise can read.
  * The Actor/Item description's @Embed[…] expansion inherits the same
@@ -247,6 +248,29 @@ function neutralizeEnrichersInCode(doc) {
  * journal-page click handler routes to the linked JournalEntry while the
  * card structure stays intact.
  */
+/**
+ * What Foundry needs on an anchor for it to behave as a content link.
+ *
+ * `content-link` is only styling. Both the click and drag handlers select
+ * `a[data-link]`, so an anchor with the class and a uuid but no `data-link`
+ * looks exactly like a link and does nothing at all — which is what every
+ * Bases card in a synced journal did.
+ *
+ * A separate function so the attribute set can be asserted without a DOM;
+ * the rewriter itself needs DOMParser, which the tests have no way to provide.
+ */
+export function contentLinkAttrs(uuid) {
+  return {
+    // Empty string, matching what TextEditor.createAnchor emits: the selector
+    // tests for presence, not value.
+    "data-link": "",
+    "data-uuid": uuid,
+    // Real content links are draggable, and the drag handler keys off the same
+    // attribute; without this a card cannot be dropped onto the canvas.
+    draggable: "true",
+  };
+}
+
 async function rewriteBasesCardLinks(doc, vault, index) {
   const cards = doc.querySelectorAll("a.bases-card[href]");
   if (cards.length === 0) return false;
@@ -257,21 +281,26 @@ async function rewriteBasesCardLinks(doc, vault, index) {
     const path = logicalPathFromHref(href);
     if (!index.paths.has(path)) continue;
     a.classList.add("content-link");
-    a.setAttribute("data-uuid", await targetUuid(vault, path, index));
-    a.removeAttribute("href"); // Foundry triggers off the data-uuid; an href would re-navigate the page.
+    for (const [k, v] of Object.entries(contentLinkAttrs(await targetUuid(vault, path, index)))) {
+      a.setAttribute(k, v);
+    }
+    a.removeAttribute("href"); // Foundry triggers off the dataset; an href would re-navigate the page.
     touched = true;
   }
   return touched;
 }
 
 function wrapRestrictedCalloutsAsSecret(doc, vault) {
-  if (!vault?.dmRole || !Array.isArray(vault.knownRoles) || vault.knownRoles.length === 0) {
+  if (!vault?.playerRole || !Array.isArray(vault.knownRoles) || vault.knownRoles.length === 0) {
     return false;
   }
-  const dmIdx = vault.knownRoles.indexOf(vault.dmRole);
-  if (dmIdx < 0) return false;
+  const playerIdx = vault.knownRoles.indexOf(vault.playerRole);
+  if (playerIdx < 0) return false;
 
-  const restrictedRoles = vault.knownRoles.slice(dmIdx);
+  // Everything above the tier players may read. `slice(playerIdx + 1)` and not
+  // `slice(playerIdx)`: the named tier is one players can see, so its callouts
+  // are not secrets from them.
+  const restrictedRoles = vault.knownRoles.slice(playerIdx + 1);
   if (restrictedRoles.length === 0) return false;
 
   let touched = false;

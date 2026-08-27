@@ -23,9 +23,11 @@ A gated vault's packs are set GM-only on every sync. Foundry gates compendium vi
 - **Bases.** Card / table / list views render natively; cards become content-links.
 - **Callouts.** Role-gated callouts on player-visible pages wrap in `<section class="secret">` so non-GM viewers don't see them.
 
-## `dmRole`: per-vault permission cutoff
+## `foundry_player_role`: what players can read
 
-Pages whose role rank is **below** `dmRole` import as **Observer** ownership (player-visible). Pages at-or-above `dmRole` stay GM-only. Default empty (everything GM-only).
+Set in the vault's `settings.md`, not here. It names the **highest role players are allowed to read**: pages at that role or below import as **Observer** ownership, everything above stays GM-only, and an empty value (the default) keeps all of it GM-only.
+
+The named tier is one players *can* see, not the first they cannot. It replaces the module's old `dmRole` setting, which named the first secret tier and was set per GM — which pages are player-facing is a fact about the vault, so the vault states it once.
 
 Combined with `<section class="secret">` wrapping, a single public-facing journal can carry inline DM notes that players never see.
 

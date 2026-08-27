@@ -27,8 +27,9 @@ preview_mode: normal
 # Internal-link preview behavior on touch (mobile) devices, where there is no hover: 'sticky' (the default) shows a preview on tap with a 'Go to page' link instead of navigating; 'none' disables previews so taps just navigate. ('normal' has no hover to trigger it on touch and behaves like 'none'.)
 preview_mode_mobile: sticky
 
-# Role assigned to pages with no 'role:' frontmatter. Empty string means the lowest-tier role (typically 'public'). Set to e.g. 'dm' for a private-by-default vault. Must be one of your configured roles.
-default_role: ""
+# The highest role your Foundry players are allowed to read. Pages at this role or below import as player-visible (Observer ownership); everything above stays GM-only. Empty string (the default) means none of it is player-visible. Set it to your lowest tier, usually 'public', to share exactly what the wiki shows a signed-out visitor. Must be one of your configured roles. Role-gated callouts above this tier are also hidden inside pages players can see.
+foundry_player_role: public
+
 
 # Override the accent color (links, headings, highlights). Any CSS color works: '#a8201a', 'crimson', 'rgb(168 32 26)'. Empty = use the built-in scarlet.
 accent_color: ""

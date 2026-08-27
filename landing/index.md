@@ -54,7 +54,7 @@ The companion module syncs this vault into a Foundry world: every page becomes a
 >    You'll get all of the journals, actors, items, scenes, cards, and rolltables defined in this vault.
 > 5. Click **Sign In** and log in as the `dm` role. The next sync brings
 >    in the DM-only [[Hidden Caves]] page and the DM callouts.
-> 6. Open the per-vault settings, set **DM role** to `dm`. Now public- 
+> 6. Set `foundry_player_role: public` in `settings.md`. Now public- 
 >    and patron-tier journals import as player-visible (Observer ownership). DM pages stay GM-only.
 
 See [[Features/Foundry integration]] for more details on how the sync works and how to set up your own vault for Foundry.

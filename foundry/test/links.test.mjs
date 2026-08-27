@@ -36,3 +36,19 @@ test("characters outside the class-safe set stay escaped", () => {
 test("underscores and hyphens are legal in a class and are left alone", () => {
   assert.equal(calloutSelectorFor("Co_Op-Lead"), ".callout.callout-co_op-lead");
 });
+
+// ── Bases cards as content links ────────────────────────────────────────────
+
+test("a card carries the attribute Foundry actually selects on", async () => {
+  // The cards had class="content-link" and a data-uuid, and did nothing when
+  // clicked. Both the click and drag handlers select `a[data-link]` — the
+  // class is styling only — so the one attribute that makes an anchor behave
+  // as a link was the one missing.
+  const { contentLinkAttrs } = await import("../scripts/links.mjs");
+  const attrs = contentLinkAttrs("JournalEntry.aaaa.JournalEntryPage.bbbb");
+
+  assert.ok("data-link" in attrs, "data-link is what a[data-link] matches");
+  assert.equal(attrs["data-link"], "", "presence, not value: createAnchor emits an empty string");
+  assert.equal(attrs["data-uuid"], "JournalEntry.aaaa.JournalEntryPage.bbbb");
+  assert.equal(attrs.draggable, "true", "real content links can be dragged onto the canvas");
+});

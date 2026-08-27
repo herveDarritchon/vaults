@@ -1,7 +1,7 @@
 // Per-vault sync-state storage. Kept separate from the `vaults` setting
 // (which holds vault config) because manifest objects can be multi-MB on
 // large vaults; if they lived in the per-vault entries, every config
-// patch (settings dialog save, dmRole edit, handler-asset toggle) would
+// patch (a settings dialog save, a re-authentication) would
 // re-serialize every vault's full file list to world-settings storage.
 //
 // Shape: a single Object setting keyed by vaultId →

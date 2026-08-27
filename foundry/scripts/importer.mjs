@@ -186,25 +186,29 @@ export async function upsertFile(target, vault, path, body, index, meta, folderI
 }
 
 /**
- * Map a page's role tier to a numeric ownership level (the value that
- * goes in `ownership.default`), given the vault's configured dmRole.
- * Returns null when no gating is configured; callers leave the doc's
- * ownership untouched in that case (Foundry's default = GM-only).
+ * The ownership level a page's role earns it, or null when the vault shares
+ * nothing with players.
  *
- * Ranks come straight from vault.knownRoles (lowest → highest, as reported
- * by the deploy manifest). Rank below dmRole → OBSERVER for everyone; rank
- * at-or-above dmRole → NONE (GM-only).
+ * `foundry_player_role` names the highest tier players may read: at or below
+ * it the page imports as OBSERVER, above it as NONE. The vault says this, in
+ * settings.md, because it is a fact about the content — which pages are
+ * player-facing — and not a preference of whoever happens to be syncing it.
+ *
+ * It reads forwards. The setting it replaced named the *first secret* tier and
+ * compared with a strict `<`, so "dm" meant "everything below dm", and a GM
+ * choosing their own dm tier had to reason one step off from what they picked.
  */
-function pageOwnershipLevelFor(vault, pageRole) {
-  if (!vault.dmRole || !vault.knownRoles?.length) return null;
-  const dmIdx = vault.knownRoles.indexOf(vault.dmRole);
-  if (dmIdx < 0) return null;
+export function pageOwnershipLevelFor(vault, pageRole) {
+  if (!vault.playerRole || !vault.knownRoles?.length) return null;
+  const playerIdx = vault.knownRoles.indexOf(vault.playerRole);
+  if (playerIdx < 0) return null;
   const pageIdx = pageRole ? vault.knownRoles.indexOf(pageRole) : -1;
-  // Unknown / missing page role: treat as the lowest tier so the page lands
-  // player-visible. Conservative the other way (default to GM-only) would
-  // hide pages from older deploys whose manifest predates the role field.
+  // A page whose role we cannot place is treated as the lowest tier, so it
+  // lands player-visible. The vault only advertises a page's role when it has
+  // one, and refusing to show anything we could not identify would hide pages
+  // from older deploys whose manifests predate the field.
   const effectiveIdx = pageIdx < 0 ? 0 : pageIdx;
-  return effectiveIdx < dmIdx
+  return effectiveIdx <= playerIdx
     ? CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER
     : CONST.DOCUMENT_OWNERSHIP_LEVELS.NONE;
 }
@@ -237,7 +241,7 @@ export async function reconcileEntries(target, vault, folderInfo, bodyMetaIndex)
   // silently re-filed or re-owned by a sync.
   const ours = (await target.contents("JournalEntry"))
     .filter((j) => j.flags?.[MODULE_ID]?.vaultId === vault.id);
-  const gated = !!vault.dmRole && !!vault.knownRoles?.length;
+  const gated = !!vault.playerRole && !!vault.knownRoles?.length;
   for (const entry of ours) {
     const patched = reconcileOwnershipData(gated ? vault : null, entry, bodyMetaIndex);
     const folder = await expectedFolder(target, vault, entry, folderInfo);

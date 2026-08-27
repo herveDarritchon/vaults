@@ -166,9 +166,10 @@ async function runSync(host, vault, { forceFull = false } = {}) {
   if (JSON.stringify(vault.handlerAssetPaths || {}) !== JSON.stringify(newAssetPaths)) {
     patch.handlerAssetPaths = newAssetPaths;
   }
-  // If the configured dmRole no longer exists in the deploy (role was
-  // removed), drop it; the user can re-set on the next settings open.
-  if (vault.dmRole && !knownRoles.includes(vault.dmRole)) patch.dmRole = "";
+  // The vault decides which of its tiers players may read. A deploy that
+  // predates the field advertises nothing, which reads as "none of it".
+  const playerRole = typeof manifest.foundry_player_role === "string" ? manifest.foundry_player_role : "";
+  if (vault.playerRole !== playerRole) patch.playerRole = playerRole;
   if (Object.keys(patch).length > 0) {
     await host.updateVaultEntry(vault.id, patch);
     Object.assign(vault, patch);

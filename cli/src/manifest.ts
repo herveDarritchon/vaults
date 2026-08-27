@@ -82,6 +82,12 @@ export interface Manifest {
    *  omitted so a client can tell an opted-out vault from a deploy that
    *  predates the setting, and say which. Absent means the latter. */
   foundry_package: FoundryPackage;
+  /** The highest role Foundry players may read. Pages at or below it import
+   *  player-visible; everything above stays GM-only. Empty means none of it
+   *  is. Replaces the per-vault `dmRole` the module used to ask each GM for,
+   *  which put a decision about *this vault's* content in the reader's hands
+   *  and inverted the sense of the comparison while it was there. */
+  foundry_player_role: string;
   auth: { required: boolean; roles: string[] };
   /** Paths to handler asset bundles, when emitted. Clients fetch these
    *  instead of guessing well-known paths so future renames don't break. */
@@ -101,6 +107,7 @@ export async function buildManifest(
   vaultName: string,
   assets: AssetAdvertisement,
   foundryPackage: FoundryPackage,
+  foundryPlayerRole: string,
 ): Promise<Manifest> {
   const files: ManifestEntry[] = [];
   const seen = new Set<string>();
@@ -150,6 +157,7 @@ export async function buildManifest(
     id_scheme: ID_SCHEME,
     name: vaultName,
     foundry_package: foundryPackage,
+    foundry_player_role: foundryPlayerRole,
     auth: { required: authRequired, roles },
     ...(Object.keys(assetBlock).length > 0 ? { assets: assetBlock } : {}),
     files,

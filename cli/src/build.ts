@@ -31,7 +31,7 @@ import { buildPreview } from "./render/preview.js";
 import { resolvePageImage } from "./render/cover.js";
 import { DEFAULT_CSS, renderThemeOverride } from "./render/styles.js";
 import { loadObsidianSnippets } from "./obsidian.js";
-import { loadSettings, writeSettings, SETTINGS_FILE, type Settings } from "./settings.js";
+import { loadSettings, writeSettings, SETTINGS_FILE, type Settings, type FrontmatterRule } from "./settings.js";
 import { loadConfig } from "./config.js";
 import { applyFrontmatterDefaults, compileFrontmatterRules } from "./frontmatter-defaults.js";
 import matter from "gray-matter";
@@ -159,6 +159,30 @@ async function writeSitemap(outputDir: string, siteUrl: string, pagePaths: strin
   );
 }
 
+/**
+ * Warn about a `default_frontmatter` rule assigning a role the vault has not
+ * configured.
+ *
+ * `default_role` validated itself and said so when it was wrong. Moving the
+ * job into a rule would have dropped that: a typo would silently supply a role
+ * nothing recognises, and every page it matched would fall back to the lowest
+ * tier — publishing a vault meant to be private, quietly.
+ */
+function warnUnknownRoles(
+  rules: FrontmatterRule[], known: Set<string>, roles: string[],
+): void {
+  for (const rule of rules) {
+    const role = rule.data?.["role"];
+    if (typeof role === "string" && role && !known.has(role)) {
+      console.warn(
+        `  settings.md: default_frontmatter rule '${rule.match}' assigns role `
+        + `"${role}", which is not one of [${roles.join(", ")}]. Pages matching it `
+        + `fall back to "${roles[0]}".`,
+      );
+    }
+  }
+}
+
 export async function buildSite(input: BuildOptions): Promise<BuildResult> {
   const start = Date.now();
   const concurrency = Math.max(2, availableParallelism());
@@ -218,19 +242,13 @@ export async function buildSite(input: BuildOptions): Promise<BuildResult> {
   const cfg = await loadConfig(opts.vaultPath, {});
   const roles = cfg.roles.length > 0 ? cfg.roles : ["public"];
   const allRoleSet = new Set(roles);
-  // Pages without a 'role:' frontmatter fall back to settings.default_role
-  // when set (and valid); otherwise the lowest-tier role. This lets a
-  // DM-by-default vault flip the polarity instead of tagging every private
-  // page individually.
-  let defaultRole = roles[0]!;
-  if (settings.values.default_role) {
-    if (allRoleSet.has(settings.values.default_role)) {
-      defaultRole = settings.values.default_role;
-    } else {
-      console.warn(`  settings.md: default_role "${settings.values.default_role}" `
-        + `not in configured roles [${roles.join(", ")}], using "${defaultRole}"`);
-    }
-  }
+  // A page's role comes from its frontmatter, and `default_frontmatter` is
+  // what supplies one to pages that state none — a DM-by-default vault sets
+  // `role: dm` in a rule matching `**`. This is the floor for anything that
+  // reaches here without a role at all, which means a vault whose rules do not
+  // cover it.
+  const defaultRole = roles[0]!;
+  warnUnknownRoles(settings.values.default_frontmatter, allRoleSet, roles);
 
   // ── Scan + filter ────────────────────────────────────────────────────────
   console.log(`Scanning ${opts.vaultPath}...`);
@@ -681,6 +699,7 @@ export async function buildSite(input: BuildOptions): Promise<BuildResult> {
         hasFoundryCss: foundryEnabled && (handlerAssets.foundry?.css.length ?? 0) > 0,
       },
       settings.values.foundry_package,
+      allRoleSet.has(settings.values.foundry_player_role) ? settings.values.foundry_player_role : "",
     );
     await writeFile(join(variantDir, "_manifest.json"), JSON.stringify(manifest));
   }

@@ -175,7 +175,7 @@ export const handler = {
 Two layers of consent gate this:
 
 1. **Handler-side opt-in** (above): only handlers that set `foundry.scripts` / `foundry.styles` get bundled into the deploy's `_handlers.foundry.{js,css}`. Everything else stays wiki-only.
-2. **GM-side opt-in** in the Foundry module's per-vault settings dialog ("Import handler stylesheets" / "Import handler scripts" checkboxes, both default off).
+2. **A per-session prompt before any script runs**, naming the vault it came from. Stylesheets are injected without asking: at worst one restyles a journal sheet. There is no GM-side checkbox — a handler's CSS is what makes its output look like anything, so a vault rendering wrongly until someone found a setting they had no reason to look for was almost always an accident rather than a decision.
 
 Live demo: this vault includes a ``` `clicker:` ``` inline handler with both opted in. ``` `clicker: try me` ``` renders as `clicker: try me` (click it!). On the wiki it works because the handler's CSS + JS included at `_handlers.{css,js}`. In Foundry it works only if the GM checked both import boxes for this vault. Otherwise the journal page shows an unstyled, inert button (since the wiki HTML containing `<button class="vaults-clicker">` survives the sync, but the styling/behaviour does not).
 

@@ -436,39 +436,6 @@ async function openSettingsDialog(vaultId) {
   const v = getVault(vaultId);
   if (!v) return;
 
-  // dmRole picker is only meaningful when we know the deploy's role list.
-  // Empty knownRoles (manifest never fetched yet, or pre-roles deploy) →
-  // skip the field; the user sees it after their first sync.
-  const dmRoleField = (v.knownRoles?.length > 0)
-    ? `<div class="form-group">
-         <label>${escapeText(game.i18n.localize("VAULTS.Dialog.DmRoleLabel"))}</label>
-         <select id="vaults-edit-dmrole">
-           <option value="">${escapeText(game.i18n.localize("VAULTS.Dialog.DmRoleNone"))}</option>
-           ${v.knownRoles.map((r) =>
-             `<option value="${escapeAttr(r)}"${r === v.dmRole ? " selected" : ""}>${escapeText(r)}</option>`
-           ).join("")}
-         </select>
-         <p class="notes">${escapeText(game.i18n.localize("VAULTS.Dialog.DmRoleHint"))}</p>
-       </div>`
-    : "";
-
-  // Handler-asset import is a separate trust gate: handler authors must opt
-  // their assets in via assets.targets.foundry.{styles,scripts}, and the GM must
-  // tick the matching box here. Defaults off; flipping on triggers a
-  // confirmation dialog (handled in the save callback). Two flat form-groups
-  // (one per checkbox) so each pair sits in V14's standard label-then-input
-  // row instead of nesting checkboxes under a third, header-style label.
-  const handlerAssetsField = `
-    <div class="form-group">
-      <label>${escapeText(game.i18n.localize("VAULTS.Dialog.ImportHandlerStyles"))}</label>
-      <input id="vaults-edit-import-styles" type="checkbox"${v.importHandlerStyles ? " checked" : ""}>
-    </div>
-    <div class="form-group">
-      <label>${escapeText(game.i18n.localize("VAULTS.Dialog.ImportHandlerScripts"))}</label>
-      <input id="vaults-edit-import-scripts" type="checkbox"${v.importHandlerScripts ? " checked" : ""}>
-      <p class="notes">${escapeText(game.i18n.localize("VAULTS.Dialog.HandlerAssetsHint"))}</p>
-    </div>`;
-
   const content = `
     <div class="vaults-form">
       <div class="form-group">
@@ -483,8 +450,6 @@ async function openSettingsDialog(vaultId) {
         <label>${escapeText(game.i18n.localize("VAULTS.Dialog.RootFolderLabel"))}</label>
         <input id="vaults-edit-root" type="text" value="${escapeAttr(v.rootFolder)}">
       </div>
-      ${dmRoleField}
-      ${handlerAssetsField}
       <p class="notes">${escapeText(game.i18n.localize("VAULTS.Dialog.RemoveHint"))}</p>
     </div>`;
 
@@ -503,42 +468,11 @@ async function openSettingsDialog(vaultId) {
             url: (root.querySelector("#vaults-edit-url")?.value || "").trim().replace(/\/+$/, ""),
             rootFolder: (root.querySelector("#vaults-edit-root")?.value || "").trim() || v.rootFolder,
           };
-          // dmRole only exists in the form when knownRoles is populated; the
-          // ?? guard keeps the field absent (no patch) on first-add saves.
-          const dmRoleEl = root.querySelector("#vaults-edit-dmrole");
-          if (dmRoleEl) patch.dmRole = dmRoleEl.value;
-
-          const wantStyles = !!root.querySelector("#vaults-edit-import-styles")?.checked;
-          const wantScripts = !!root.querySelector("#vaults-edit-import-scripts")?.checked;
-          // Only require confirmation when transitioning OFF → ON. Flipping
-          // either OFF or leaving ON unchanged is a no-op for trust.
-          const flippingOnStyles = wantStyles && !v.importHandlerStyles;
-          const flippingOnScripts = wantScripts && !v.importHandlerScripts;
-          if (flippingOnStyles || flippingOnScripts) {
-            const ok = await confirmHandlerAssetImport({
-              vault: v, styles: flippingOnStyles, scripts: flippingOnScripts,
-            });
-            if (!ok) return false;
-          }
-          patch.importHandlerStyles = wantStyles;
-          patch.importHandlerScripts = wantScripts;
-
           if (!patch.url) {
             ui.notifications.warn(game.i18n.localize("VAULTS.Dialog.UrlRequired"));
             return false;
           }
           await updateVault(vaultId, patch);
-          // Reflect handler-asset toggle changes immediately. A turn-on
-          // fetches + injects; a turn-off removes the previously-injected
-          // <style>/<script>; an idempotent re-save just refreshes content.
-          // Silent: the GM is actively in this dialog and (for OFF→ON
-          // transitions) just acknowledged the warning above. The
-          // per-sync prompt covers the "vault shipped new code" case.
-          if (patch.importHandlerStyles !== v.importHandlerStyles
-              || patch.importHandlerScripts !== v.importHandlerScripts) {
-            await applyHandlerAssets(getVault(vaultId))
-              .catch((err) => console.warn(`Vaults | handler-asset refresh failed:`, err));
-          }
           return true;
         },
       },
@@ -582,32 +516,6 @@ async function confirmRemoveVault(v) {
   });
 }
 
-/**
- * Warning dialog shown the first time a GM enables handler-asset import for
- * a vault. Custom CSS at worst restyles a journal sheet (low risk); custom
- * JS runs in Foundry's global scope and can interact with `game`, `canvas`,
- * hooks, and document data — that needs an eyes-open consent.
- *
- * Returns true if the GM accepts (proceed with the toggle); false to roll
- * the form's checkbox state back to the unchecked baseline.
- */
-async function confirmHandlerAssetImport({ vault, styles, scripts }) {
-  const DialogV2 = foundry.applications.api.DialogV2;
-  const lines = [];
-  if (styles) lines.push(`<li>${escapeText(game.i18n.localize("VAULTS.HandlerAssets.WarnStyles"))}</li>`);
-  if (scripts) lines.push(`<li><strong>${escapeText(game.i18n.localize("VAULTS.HandlerAssets.WarnScripts"))}</strong></li>`);
-  const body = `
-    <p>${escapeText(game.i18n.format("VAULTS.HandlerAssets.WarnIntro", { name: vault.label }))}</p>
-    <ul>${lines.join("")}</ul>
-    <p>${escapeText(game.i18n.localize("VAULTS.HandlerAssets.WarnTrust"))}</p>
-    <p class="notes">${escapeText(game.i18n.localize("VAULTS.HandlerAssets.WarnReversible"))}</p>`;
-  return DialogV2.confirm({
-    window: { title: game.i18n.localize("VAULTS.HandlerAssets.WarnTitle") },
-    content: body,
-    yes: { label: game.i18n.localize("VAULTS.HandlerAssets.WarnAccept") },
-    no:  { label: game.i18n.localize("VAULTS.HandlerAssets.WarnCancel") },
-  });
-}
 
 // ── Connect dialog (paste-flow) ───────────────────────────────────────────
 // "Open in browser → sign in → copy → paste here." Same shape as the

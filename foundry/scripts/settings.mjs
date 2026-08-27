@@ -33,23 +33,14 @@ export const VAULT_DEFAULTS = {
   // manifest each sync, like `public`. A deploy that predates the setting
   // advertises nothing and reads as "compendium".
   foundryPackage: "compendium",
-  // Role order (lowest → highest) reported by the deploy's manifest. Cached
-  // on the vault so the per-vault settings dialog can populate the dmRole
-  // dropdown without re-fetching the manifest.
+  // Role order (lowest → highest) reported by the deploy's manifest.
   knownRoles: [],
-  // Pages with a role rank below dmRole get default ownership "observer"
-  // (player-visible) on import; pages at dmRole or higher stay GM-only.
-  // Empty string = no gating; everything imports as GM-only.
-  dmRole: "",
-  // Per-vault opt-in to import handler-shipped CSS/JS from the deployed
-  // wiki. Both default false: a handler author has to opt in by setting
-  // `assets.targets.foundry.{styles,scripts} = true` AND the GM has to flip the
-  // matching toggle here. CSS at worst restyles a journal sheet; JS runs
-  // in Foundry's global scope and can interact with `game`, `canvas`,
-  // hooks, and document data — treat both flips as "I trust this vault's
-  // handler authors with my world".
-  importHandlerStyles: false,
-  importHandlerScripts: false,
+  // The highest role this vault lets Foundry players read, from its
+  // settings.md. Pages at or below it import player-visible; above stays
+  // GM-only; empty means none of it is. Cached from the manifest each sync,
+  // like `public` — it is the vault's statement about its own content, not a
+  // choice the syncing GM makes.
+  playerRole: "",
   // Asset URLs the deploy advertises in its manifest's `assets.foundry`
   // block. Cached here so applyHandlerAssetsWithConfirm fetches via the canonical
   // path instead of guessing /_handlers.foundry.{js,css}. Empty / null
