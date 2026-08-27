@@ -403,6 +403,8 @@ export interface ModuleOptions {
    * same documents.
    */
   foundryPackage: FoundryPackage;
+  /** Whether the deploy ships auth middleware, which rewrites manifest URLs. */
+  gated?: boolean;
   /** Which variant subdirectory the rendered bodies live in. */
   renderedRole?: string;
 }
@@ -817,19 +819,34 @@ export async function buildFoundryModule(opts: ModuleOptions): Promise<ModuleRes
     documents += entries.length;
   }
 
-  return finishModule(opts, manifest, moduleId, version, cli, byPack, assets, moulinette, skipped, documents, stats, moduleDirRel);
+  // An ungated deploy serves its manifest untouched, so whatever is written in
+  // `download` is what Foundry's installer receives. A gated one is rewritten
+  // at serve time — the middleware resolves the relative path onto the request
+  // origin and signs it — so only this case has to produce an absolute URL
+  // itself, and it needs the vault to have said where it lives.
+  opts.gated = roles.length > 1;
+  const selfServedBase = opts.gated ? "" : settings.values.site_url.replace(/\/+$/, "");
+  return finishModule(opts, manifest, moduleId, version, cli, byPack, assets, moulinette, skipped, documents, stats, moduleDirRel, selfServedBase);
 }
 
 /**
  * Give a RollTable the shape Foundry expects.
  *
- * A page authors results as `{ text }` or `{ uuid }` with an optional weight
- * and range; a table document wants each one typed, named, ranged, imaged and
- * keyed. Foundry does not fill these in — a result with no `type` simply never
- * draws — so the compiler does, rather than making every page restate the same
- * nine fields.
+ * A page authors a result's prose as `{ name }` / `{ description }`, or as
+ * `{ uuid }` for a document result, with an optional weight and range; a table
+ * document wants each one typed, named, ranged, imaged and keyed. Foundry does
+ * not fill these in — a result with no `type` simply never draws — so the
+ * compiler does, rather than making every page restate the same nine fields.
+ *
+ * `text` is Foundry's pre-13 single prose field, deprecated but still what an
+ * older page carries. It maps the way Foundry's own migration maps it: to
+ * `description` on a text result, to `name` on a document one. What the page
+ * states outright always wins, because filling a field in is the job here and
+ * overwriting one is not: results authored with `name` — the shape the sync
+ * path passes straight through, and the shape the landing demo documents —
+ * used to compile to a table of blank rows.
  */
-function assembleRollTableResults(
+export function assembleRollTableResults(
   doc: Record<string, unknown>, tableId: string, stats: Record<string, unknown>,
 ): void {
   const raw = Array.isArray(doc["results"]) ? doc["results"] as Array<Record<string, unknown>> : [];
@@ -838,11 +855,12 @@ function assembleRollTableResults(
     const uuid = typeof r["uuid"] === "string" ? r["uuid"] : "";
     const isDoc = uuid.length > 0;
     const text = typeof r["text"] === "string" ? r["text"] : "";
+    const stated = (field: string) => typeof r[field] === "string" ? r[field] as string : null;
     return {
       _id: rid,
       type: isDoc ? "document" : "text",
-      name: isDoc ? text : "",
-      description: isDoc ? "" : text,
+      name: stated("name") ?? (isDoc ? text : ""),
+      description: stated("description") ?? (isDoc ? "" : text),
       ...(isDoc ? { documentUuid: uuid } : {}),
       img: r["img"] ?? "icons/svg/d20-black.svg",
       weight: r["weight"] ?? 1,
@@ -939,6 +957,9 @@ async function finishModule(
   documents: number,
   stats: Record<string, unknown>,
   moduleDirRel: string,
+  /** Absolute base for a public vault's own URLs; "" when the middleware will
+   *  rewrite them at serve time, or when the vault never said where it lives. */
+  selfServedBase: string,
 ): Promise<ModuleResult> {
   // Two ways a module reaches a reader, and the manifest already says which.
   //
@@ -1076,10 +1097,29 @@ async function finishModule(
     const outDir = join(opts.vaultPath, opts.outputDir);
     await mkdir(outDir, { recursive: true });
     manifestPath = join(outDir, "module.json");
-    // Relative, so it resolves on whichever host serves the vault and can be
-    // signed for a gated install. An absolute URL cannot be either.
-    manifest["download"] = `/${opts.outputDir}/${zipName}`;
-    manifest["manifest"] = `/${opts.outputDir}/module.json`;
+    // Foundry's installer fetches `download` from Node, with no base to
+    // resolve against: a relative URL fails with "Failed to parse URL from
+    // /downloads/….zip" and the module cannot be installed at all.
+    //
+    // A gated vault still writes one, because its middleware resolves the path
+    // onto whichever host the request arrived on and signs the result — which
+    // is also why it must not be absolute there: a manifest hard-coding one of
+    // a vault's hostnames is unsignable when read over another.
+    const rel = `/${opts.outputDir}`;
+    if (!selfServedBase && !opts.gated) {
+      console.warn(
+        `    this vault serves its own module but has no 'site_url' in settings.md, so `
+        + `the manifest can only name '${rel}/${zipName}' relatively. Foundry's installer `
+        + `resolves that against nothing and refuses it. Set site_url and rebuild.`,
+      );
+    }
+    if (selfServedBase) {
+      manifest["download"] = `${selfServedBase}${rel}/${zipName}`;
+      manifest["manifest"] = `${selfServedBase}${rel}/module.json`;
+    } else {
+      manifest["download"] = `${rel}/${zipName}`;
+      manifest["manifest"] = `${rel}/module.json`;
+    }
     await writeFile(join(moduleDir, "module.json"), JSON.stringify(manifest, null, 2) + "\n");
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
     zipPath = join(opts.vaultPath, opts.outputDir, zipName);

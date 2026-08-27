@@ -62,11 +62,23 @@ export function foundryManifestPaths(source: string): string[] {
  * this vault's second hostname from anyone else's. So an absolute URL goes
  * unsigned and the install fails on its second fetch.
  */
-export function manifestDownloadPath(manifestJson: string): { path: string | null; absolute: string | null } {
+export function manifestDownloadPath(
+  manifestJson: string, siteUrl = "",
+): { path: string | null; absolute: string | null } {
   try {
     const parsed = JSON.parse(manifestJson) as { download?: unknown };
     if (typeof parsed.download !== "string" || !parsed.download) return { path: null, absolute: null };
-    if (/^[a-z][a-z0-9+.-]*:|^\/\//i.test(parsed.download)) return { path: null, absolute: parsed.download };
+    if (/^[a-z][a-z0-9+.-]*:|^\/\//i.test(parsed.download)) {
+      // The vault's own URL is not a foreign one. A public vault has to write
+      // absolute URLs — Foundry's installer fetches `download` with no base to
+      // resolve against — so the file it names is still a file this build has
+      // to stage, and only a URL pointing somewhere else is a problem.
+      const base = siteUrl.replace(/\/+$/, "");
+      if (base && parsed.download.startsWith(base + "/")) {
+        return { path: parsed.download.slice(base.length + 1), absolute: null };
+      }
+      return { path: null, absolute: parsed.download };
+    }
     return { path: parsed.download.replace(/^\/+/, ""), absolute: null };
   } catch {
     return { path: null, absolute: null };
@@ -85,18 +97,24 @@ export const foundryManifestHandler: CodeBlockHandler = {
       return { html: '<div class="vaults-download-error">foundry-manifest: needs a <code>manifest:</code> line</div>' };
     }
     const esc = ctx.escape;
+    // A single-role vault ships no middleware, so there is no /_link to mint
+    // through — and nothing to mint, since the manifest is public. The button
+    // copies the plain URL, which is also the better link: it does not expire,
+    // so Foundry can check for updates through it. Defaults to gated, the
+    // assumption that fails safely.
+    const gated = ctx.render?.gated !== false;
+    const href = servedHref(spec.manifest);
     return {
       html: [
         `<div class="vaults-download vaults-foundry-manifest">`,
         `<span class="vaults-download-label">${esc(spec.label)}</span>`,
         spec.note ? `<span class="vaults-download-note">${esc(spec.note)}</span>` : "",
-        // Minted per click: the link is short-lived by design, so one baked in
-        // at build time would be dead before anyone read the page.
+        // Gated links are minted per click: short-lived by design, so one baked
+        // in at build time would be dead before anyone read the page.
         `<button class="vaults-download-manifest" type="button"`,
-        ` data-manifest="${esc(servedHref(spec.manifest))}">Copy install link</button>`,
-        `<p class="vaults-download-hint">Paste into Foundry's <em>Install Module</em> dialog.`,
-        ` The link expires shortly, and Foundry cannot check for updates through it —`,
-        ` copy a fresh one to upgrade.</p>`,
+        gated ? "" : ` data-direct="1"`,
+        ` data-manifest="${esc(href)}">Copy install link</button>`,
+        `<p class="vaults-download-hint">Paste into Foundry's <em>Install Module</em> dialog.</p>`,
         `</div>`,
       ].join(""),
     };
@@ -110,9 +128,12 @@ const MANIFEST_STYLES = `
 .vaults-download-hint { font-size: .8rem; color: var(--fg-muted, #666); margin: .5rem 0 0; }
 `;
 
-// Asks the deploy to mint a short-lived link, then puts it on the clipboard.
-// Minted per click because it expires: a URL baked in at build time would be
-// dead long before anyone pressed the button.
+// Puts an install URL on the clipboard.
+//
+// On a gated vault that means asking the deploy to mint a short-lived one, per
+// click, because it expires: a URL baked in at build time would be dead long
+// before anyone pressed the button. On a public vault there is no middleware
+// to ask and nothing to authenticate, so the plain URL is copied as-is.
 const MANIFEST_RUNTIME = `
 (function () {
   document.addEventListener("click", async function (e) {
@@ -122,11 +143,17 @@ const MANIFEST_RUNTIME = `
     btn.disabled = true;
     btn.textContent = "Generating…";
     try {
-      var res = await fetch("/_link?path=" + encodeURIComponent(btn.dataset.manifest), { credentials: "same-origin" });
-      if (!res.ok) throw new Error(String(res.status));
-      var data = await res.json();
-      await navigator.clipboard.writeText(data.url);
-      btn.textContent = "Copied — expires in " + data.expiresInMinutes + " min";
+      if (btn.dataset.direct) {
+        // Public vault: no middleware to ask, and nothing to authenticate.
+        await navigator.clipboard.writeText(new URL(btn.dataset.manifest, location.href).href);
+        btn.textContent = "Copied";
+      } else {
+        var res = await fetch("/_link?path=" + encodeURIComponent(btn.dataset.manifest), { credentials: "same-origin" });
+        if (!res.ok) throw new Error(String(res.status));
+        var data = await res.json();
+        await navigator.clipboard.writeText(data.url);
+        btn.textContent = "Copied — expires in " + data.expiresInMinutes + " min";
+      }
     } catch (err) {
       btn.textContent = "Couldn't generate a link";
     } finally {

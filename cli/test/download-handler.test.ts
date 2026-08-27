@@ -103,8 +103,11 @@ import {
   foundryManifestHandler, foundryManifestPaths, manifestDownloadPath, parseManifestBlock,
 } from "../src/render/handlers/builtin/foundry-manifest.js";
 
-function renderManifest(content: string): string {
-  const ctx = { escape: (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;") } as never;
+function renderManifest(content: string, gated = true): string {
+  const ctx = {
+    escape: (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"),
+    render: { gated },
+  } as never;
   return (foundryManifestHandler.render(content, ctx) as { html: string }).html;
 }
 
@@ -120,11 +123,6 @@ describe("foundry-manifest", () => {
     assert.match(html, /My Module/);
   });
 
-  it("says Foundry cannot check for updates through the link", () => {
-    // The link expires, so Foundry's stored manifest URL stops resolving.
-    // Saying so on the page is cheaper than the confused bug report.
-    assert.match(renderManifest("manifest: m.json"), /cannot check for updates/);
-  });
 
   it("names only the manifest; the zip comes from the manifest itself", () => {
     assert.deepEqual(
@@ -153,5 +151,32 @@ describe("foundry-manifest", () => {
   it("stays quiet on a manifest with no download field", () => {
     assert.deepEqual(manifestDownloadPath(JSON.stringify({ id: "x" })), { path: null, absolute: null });
     assert.deepEqual(manifestDownloadPath("not json"), { path: null, absolute: null });
+  });
+});
+
+describe("foundry-manifest on a public vault", () => {
+  // A single-role vault ships no Functions, so /_link is a 404 there. The
+  // button used to call it anyway and report "Couldn't generate a link" on
+  // every public vault that offered a module.
+  const BLOCK = "manifest: downloads/module.json\nlabel: Spellcraft";
+
+  it("copies the plain URL instead of minting one", () => {
+    const html = renderManifest(BLOCK, false);
+    assert.match(html, /data-direct="1"/);
+    assert.match(html, /data-manifest="\/downloads\/module\.json"/);
+  });
+
+
+  it("still mints on a gated vault", () => {
+    const html = renderManifest(BLOCK, true);
+    assert.doesNotMatch(html, /data-direct/);
+  });
+
+  it("assumes gated when the context says nothing", () => {
+    // Failing safe: minting on a vault that needs no minting is a worse
+    // button, but copying a bare URL from one that does is a broken install.
+    const ctx = { escape: (s: string) => s } as never;
+    const html = (foundryManifestHandler.render(BLOCK, ctx) as { html: string }).html;
+    assert.doesNotMatch(html, /data-direct/);
   });
 });

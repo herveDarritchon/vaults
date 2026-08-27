@@ -62,4 +62,12 @@ export interface RenderContext {
    * dependencies between page renders.
    */
   outlinksByPath?: Map<string, Set<string>>;
+  /**
+   * Whether this deploy gates access, i.e. whether the auth middleware ships.
+   *
+   * A single-role vault is pure static assets with no Functions, so anything a
+   * handler emits that calls a middleware endpoint 404s there. Defaults to
+   * gated when absent, which is the assumption that fails safely.
+   */
+  gated?: boolean;
 }

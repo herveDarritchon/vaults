@@ -318,13 +318,13 @@ export async function buildSite(input: BuildOptions): Promise<BuildResult> {
     downloadPaths.add(rel);
     const file = withinLimit.find((f) => f.path === rel);
     if (!file) continue;
-    const { path, absolute } = manifestDownloadPath(await readFile(file.absolute, "utf8"));
+    const { path, absolute } = manifestDownloadPath(await readFile(file.absolute, "utf8"), settings.values.site_url);
     if (absolute) {
       console.warn(
-        `  ${rel}: "download" is an absolute URL (${absolute}). Make it relative`
-        + ` (e.g. "/downloads/module.zip") so it resolves on whichever host serves this`
-        + ` vault — an absolute one cannot be signed for a gated install, and the`
-        + ` install fails fetching the file.`,
+        `  ${rel}: "download" points outside this vault (${absolute}), so the file is not`
+        + ` staged into the deploy. If it is meant to be this vault's own file, either`
+        + ` set 'site_url' to the host it names or write the path relative and let the`
+        + ` build make it absolute.`,
       );
     }
     if (path) {
@@ -631,6 +631,7 @@ export async function buildSite(input: BuildOptions): Promise<BuildResult> {
       role,
       visibleRoles,
       redactRoles,
+      gated: !collapseToRoot,
       variantDir,
       vaultName: opts.vaultName,
       vaultPath: opts.vaultPath,
@@ -805,6 +806,8 @@ interface VariantArgs {
   role: string;
   visibleRoles: ReadonlySet<string>;
   redactRoles: ReadonlySet<string>;
+  /** Whether the deploy ships the auth middleware; false for single-role. */
+  gated: boolean;
   variantDir: string;
   vaultName: string;
   /** Vault root, used to resolve `foundry.data_json` paths declared in page frontmatter. */
@@ -907,6 +910,7 @@ async function buildVariant(a: VariantArgs): Promise<VariantStats> {
     bases: a.baseSources,
     defaultImageWidth: a.settings.default_image_width,
     redactRoles: a.redactRoles,
+    gated: a.gated,
     handlers: a.handlerRegistry,
     outlinksByPath,
   };

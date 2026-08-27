@@ -9,7 +9,9 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { keyEmbedded, resolveSelfContainedBase, stripMoulinette } from "../src/foundry-module.js";
+import {
+  assembleRollTableResults, keyEmbedded, resolveSelfContainedBase, stripMoulinette,
+} from "../src/foundry-module.js";
 
 describe("what a module can build from foundry.base", () => {
   it("takes a blank type as-is", () => {
@@ -92,6 +94,38 @@ describe("embedded documents", () => {
     const doc: Record<string, unknown> = { results: [{ _id: "mine000000000001" }] };
     keyEmbedded(doc, "tables", "t1");
     assert.equal((doc["results"] as Array<Record<string, unknown>>)[0]!["_id"], "mine000000000001");
+  });
+});
+
+describe("roll table results", () => {
+  const results = (doc: Record<string, unknown>) =>
+    doc["results"] as Array<Record<string, unknown>>;
+
+  it("keeps the prose the page wrote", () => {
+    // The shape the landing demo documents and the sync path passes through.
+    // Overwriting it compiled every row to a blank one.
+    const doc: Record<string, unknown> = { results: [{ range: [1, 1], name: "A weary ranger." }] };
+    assembleRollTableResults(doc, "table0000000001", {});
+    assert.equal(results(doc)[0]!["name"], "A weary ranger.");
+    assert.equal(results(doc)[0]!["type"], "text");
+  });
+
+  it("still reads Foundry's pre-13 `text`, the way Foundry migrates it", () => {
+    const doc: Record<string, unknown> = {
+      results: [{ text: "A lone owlbear." }, { uuid: "Compendium.x.y.Actor.z", text: "Owlbear" }],
+    };
+    assembleRollTableResults(doc, "table0000000001", {});
+    assert.equal(results(doc)[0]!["description"], "A lone owlbear.", "text result: description");
+    assert.equal(results(doc)[1]!["name"], "Owlbear", "document result: name");
+    assert.equal(results(doc)[1]!["documentUuid"], "Compendium.x.y.Actor.z");
+  });
+
+  it("fills in only what the page left out", () => {
+    const doc: Record<string, unknown> = { results: [{ name: "Nothing.", img: "icons/mine.webp" }] };
+    assembleRollTableResults(doc, "table0000000001", {});
+    assert.equal(results(doc)[0]!["img"], "icons/mine.webp");
+    assert.equal(results(doc)[0]!["weight"], 1);
+    assert.deepEqual(results(doc)[0]!["range"], [1, 1]);
   });
 });
 
