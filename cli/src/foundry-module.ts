@@ -493,6 +493,7 @@ export async function buildFoundryModule(opts: ModuleOptions): Promise<ModuleRes
   // through its own deploy keeps one at the root; a vault that already has a
   // module directory it maintains by hand — lang files, styles, Babele
   // translations — keeps one there, and the compiled packs belong beside them.
+  const settings = await loadSettings(opts.vaultPath);
   let manifest: Record<string, unknown> | null = null;
   let moduleDirRel = "";
   for (const dir of ["", "foundry"]) {
@@ -504,11 +505,35 @@ export async function buildFoundryModule(opts: ModuleOptions): Promise<ModuleRes
       break;
     } catch { /* try the other location */ }
   }
+
+  // No module.json: the manifest can be stated in settings.md instead, which is
+  // where a vault says everything else about itself. A file earns its place
+  // once the module has scripts, styles or translations to sit beside; for a
+  // module that is only compiled content, it was four keys in a file of its
+  // own that nothing else read.
+  const inline = settings.values.foundry.module;
+  if (!manifest && Object.keys(inline).length > 0) {
+    manifest = {
+      title: settings.values.vault_name,
+      // The generation this module targets. Stated so a compiled module does
+      // not silently claim compatibility with whatever Foundry happens to run.
+      compatibility: { minimum: "13", verified: "14" },
+      ...structuredClone(inline),
+    };
+  } else if (manifest && Object.keys(inline).length > 0) {
+    console.warn(
+      `  --module: both ${join(moduleDirRel, "module.json")} and settings.md's `
+      + `'foundry.module' define this module. Using the file; delete one so there `
+      + `is a single answer to what the module is.`,
+    );
+  }
+
   if (!manifest) {
     console.warn(
-      "  --module: no module.json at the vault root or in foundry/. Add one with"
-      + ' at least { "id", "title", "version", "compatibility" } — every other key'
-      + " you put there is preserved, only `packs` is rewritten.",
+      "  --module: this vault does not say what module to build. Either set "
+      + "'foundry.module' in settings.md (id, title, version, compatibility) or add a "
+      + "module.json at the vault root or in foundry/. Every key you put there is "
+      + "preserved; only `packs` is rewritten.",
     );
     return null;
   }
@@ -531,7 +556,6 @@ export async function buildFoundryModule(opts: ModuleOptions): Promise<ModuleRes
   // out loud, in module.json, rather than being the default nobody checked.
   const cfg = await loadConfig(opts.vaultPath, {});
   const roles = cfg.roles.length > 0 ? cfg.roles : ["public"];
-  const settings = await loadSettings(opts.vaultPath);
   // Pages carry their own role by the time they reach here, supplied by
   // `default_frontmatter` where they stated none. This is the floor.
   const defaultRole = roles[0]!;

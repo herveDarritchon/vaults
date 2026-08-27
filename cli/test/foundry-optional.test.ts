@@ -1,4 +1,4 @@
-// `foundry_package: none` drops the Foundry integration from a deploy.
+// `foundry.package: none` drops the Foundry integration from a deploy.
 //
 // The importer bundle is ~60KB shipped to every site, and the /_batch
 // endpoints are the API the Foundry module syncs through. A course site or a
@@ -35,9 +35,9 @@ async function build(settings: string, extra: Record<string, string> = {}): Prom
 
 const exists = (p: string) => stat(p).then(() => true, () => false);
 
-describe("foundry_package: none", () => {
+describe("foundry.package: none", () => {
   it("omits the importer bundle", async () => {
-    const out = await build("foundry_package: none\n");
+    const out = await build("foundry:\n  package: none\n");
     assert.equal(await exists(join(out, "_foundry/importer.js")), false);
     await rm(out, { recursive: true, force: true });
   });
@@ -52,7 +52,7 @@ describe("foundry_package: none", () => {
 
   it("stops advertising Foundry handler assets in the manifest", async () => {
     const on = JSON.parse(await readFile(join(await build(""), "_manifest.json"), "utf8"));
-    const off = JSON.parse(await readFile(join(await build("foundry_package: none\n"), "_manifest.json"), "utf8"));
+    const off = JSON.parse(await readFile(join(await build("foundry:\n  package: none\n"), "_manifest.json"), "utf8"));
     assert.equal(off.assets?.foundry, undefined);
     // The browser bundles are unrelated and must survive.
     assert.ok(off.assets?.browser, "browser handler assets are not Foundry-specific");
@@ -60,7 +60,7 @@ describe("foundry_package: none", () => {
   });
 
   it("leaves the rest of the deploy untouched", async () => {
-    const out = await build("foundry_package: none\n");
+    const out = await build("foundry:\n  package: none\n");
     for (const f of ["index.html", "index.body.html", "_search-index.json", "styles.css", "_manifest.json"]) {
       assert.equal(await exists(join(out, f)), true, `${f} must still ship`);
     }
@@ -71,7 +71,7 @@ describe("foundry_package: none", () => {
     // The setting controls what the deploy *serves*, not what pages may say.
     // A vault can flip it back on without editing every page.
     const page = { "NPC.md": '---\ntitle: Bob\nfoundry:\n  base: "Actor:npc"\n---\nBob.\n' };
-    const out = await build("foundry_package: none\n", page);
+    const out = await build("foundry:\n  package: none\n", page);
     const m = JSON.parse(await readFile(join(out, "_manifest.json"), "utf8"));
     const row = m.files.find((f: { path: string }) => f.path === "NPC.body.html");
     assert.equal(row?.meta?.foundry?.base, "Actor:npc");
@@ -79,7 +79,7 @@ describe("foundry_package: none", () => {
   });
 });
 
-describe("foundry_package validation", () => {
+describe("foundry.package validation", () => {
   it("rejects a value outside the vocabulary and falls back", async () => {
     // A typo here used to be impossible: the setting was a boolean. Now it
     // names a packaging shape, and an unrecognised one that silently became
@@ -87,9 +87,9 @@ describe("foundry_package validation", () => {
     // ask for, with links baked to match.
     const { loadSettings } = await import("../src/settings.js");
     const dir = await mkdtemp(join(tmpdir(), "vaults-settings-"));
-    await writeFile(join(dir, "settings.md"), "---\nfoundry_package: adventurte\n---\n");
+    await writeFile(join(dir, "settings.md"), "---\nfoundry:\n  package: adventurte\n---\n");
     const parsed = await loadSettings(dir);
-    assert.equal(parsed.values.foundry_package, "compendium");
+    assert.equal(parsed.values.foundry.package, "compendium");
     assert.match(parsed.warnings.join("\n"), /one of none, compendium, adventure/);
   });
 
@@ -97,10 +97,46 @@ describe("foundry_package validation", () => {
     const { loadSettings } = await import("../src/settings.js");
     for (const want of ["none", "compendium", "adventure"] as const) {
       const dir = await mkdtemp(join(tmpdir(), "vaults-settings-"));
-      await writeFile(join(dir, "settings.md"), `---\nfoundry_package: ${want}\n---\n`);
+      await writeFile(join(dir, "settings.md"), `---\nfoundry:\n  package: ${want}\n---\n`);
       const parsed = await loadSettings(dir);
-      assert.equal(parsed.values.foundry_package, want);
+      assert.equal(parsed.values.foundry.package, want);
       assert.deepEqual(parsed.warnings, []);
     }
+  });
+});
+
+describe("the foundry block", () => {
+  it("takes defaults for the keys a vault does not state", async () => {
+    const { loadSettings } = await import("../src/settings.js");
+    const dir = await mkdtemp(join(tmpdir(), "vaults-settings-"));
+    await writeFile(join(dir, "settings.md"), "---\nfoundry:\n  player_role: dm\n---\n");
+    const { values, warnings } = await loadSettings(dir);
+    assert.equal(values.foundry.player_role, "dm");
+    assert.equal(values.foundry.package, "compendium", "unstated keys keep their default");
+    assert.deepEqual(values.foundry.module, {});
+    assert.deepEqual(warnings, []);
+  });
+
+  it("names a misspelled subkey instead of reading it as unset", async () => {
+    // The generic type check only asks whether it is an object. Without this a
+    // typo reads as an absent key, which is a default rather than a mistake —
+    // `player_roll: dm` would silently share nothing.
+    const { loadSettings } = await import("../src/settings.js");
+    const dir = await mkdtemp(join(tmpdir(), "vaults-settings-"));
+    await writeFile(join(dir, "settings.md"), "---\nfoundry:\n  player_roll: dm\n---\n");
+    const { values, warnings } = await loadSettings(dir);
+    assert.match(warnings.join("\n"), /unknown key 'foundry\.player_roll'/);
+    assert.equal(values.foundry.player_role, "");
+  });
+
+  it("keeps an arbitrary manifest under module", async () => {
+    // Whatever Foundry accepts in a module.json, since that is what it becomes.
+    const { loadSettings } = await import("../src/settings.js");
+    const dir = await mkdtemp(join(tmpdir(), "vaults-settings-"));
+    await writeFile(join(dir, "settings.md"),
+      "---\nfoundry:\n  module:\n    id: x\n    relationships:\n      requires:\n        - id: dnd5e\n---\n");
+    const { values } = await loadSettings(dir);
+    assert.equal(values.foundry.module["id"], "x");
+    assert.ok(values.foundry.module["relationships"], "nested structure survives the round trip");
   });
 });

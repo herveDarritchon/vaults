@@ -23,7 +23,7 @@ A gated vault's packs are set GM-only on every sync. Foundry gates compendium vi
 - **Bases.** Card / table / list views render natively; cards become content-links.
 - **Callouts.** Role-gated callouts on player-visible pages wrap in `<section class="secret">` so non-GM viewers don't see them.
 
-## `foundry_player_role`: what players can read
+## `foundry.player_role`: what players can read
 
 Set in the vault's `settings.md`, not here. It names the **highest role players are allowed to read**: pages at that role or below import as **Observer** ownership, everything above stays GM-only, and an empty value (the default) keeps all of it GM-only.
 

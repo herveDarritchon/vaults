@@ -32,7 +32,7 @@ export async function build(vaultPath: string, opts: BuildOptions): Promise<void
       outputDir: "downloads",
       renderedDir: outputDir,
       renderedRole: await lowestRole(vaultPath),
-      foundryPackage: (await loadSettings(vaultPath)).values.foundry_package,
+      foundryPackage: (await loadSettings(vaultPath)).values.foundry.package,
     });
     if (built) {
       // An in-place build (the author's module.json already names a download

@@ -27,8 +27,6 @@ preview_mode: normal
 # Internal-link preview behavior on touch (mobile) devices, where there is no hover: 'sticky' (the default) shows a preview on tap with a 'Go to page' link instead of navigating; 'none' disables previews so taps just navigate. ('normal' has no hover to trigger it on touch and behaves like 'none'.)
 preview_mode_mobile: sticky
 
-# The highest role your Foundry players are allowed to read. Pages at this role or below import as player-visible (Observer ownership); everything above stays GM-only. Empty string (the default) means none of it is player-visible. Set it to your lowest tier, usually 'public', to share exactly what the wiki shows a signed-out visitor. Must be one of your configured roles. Role-gated callouts above this tier are also hidden inside pages players can see.
-foundry_player_role: public
 
 
 # Override the accent color (links, headings, highlights). Any CSS color works: '#a8201a', 'crimson', 'rgb(168 32 26)'. Empty = use the built-in scarlet.
@@ -55,8 +53,6 @@ auto_image: true
 # Ship files with unrecognized extensions to every deploy variant. Default false skips them (with a warning) so a stray file in your vault can't accidentally bypass role gating. Recognized media types (audio/video/pdf/epub) are reference-gated like images regardless of this setting.
 include_unknown_files: false
 
-# How this vault reaches Foundry VTT. 'adventure' packages it as a single Adventure document: import it once and every internal link resolves to the documents you imported, which is what a campaign or module wants. 'compendium' produces browsable compendium packs, one per document type, which is what a reference library wants — you look one thing up rather than importing the lot. 'none' ships no Foundry integration at all: the deploy drops the importer bundle (~60KB) and the /_batch sync endpoints it would never use, for a vault that has nothing to do with Foundry. Pages keep their 'foundry:' frontmatter under 'none'; it simply isn't advertised.
-foundry_package: compendium
 
 # Markdown text rendered in a small <footer> at the bottom of every page. Supports inline markdown (links, *italic*, **bold**). Set to an empty string to hide the footer entirely.
 footer: "Generated with [Wizzlethorpe Vaults](https://vaults.wizzlethorpe.com)."

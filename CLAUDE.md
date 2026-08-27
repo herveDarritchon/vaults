@@ -34,7 +34,7 @@ This was previously three submodules pinned by SHA in a parent repo. The submodu
 - **`cli/`** — ~99% of active development. Build with `pnpm --filter @wizzlethorpe/vaults run build`; test with `pnpm --filter @wizzlethorpe/vaults run test`.
 - **`foundry/`** — Foundry VTT module that pulls per-page rendered HTML via `/_batch`, downloads images via `/_batch-images`, and writes the result into **compendium packs** (never directly into world documents, so a sync can always overwrite its own output). Folder-as-JournalEntry model: every directory becomes one entry, every `.md` file becomes an embedded JournalEntryPage.
 
-  The vault's `foundry_package` setting picks the container, and `target.mjs` is the one interface both shapes are written through:
+  The vault's `foundry.package` setting picks the container, and `target.mjs` is the one interface both shapes are written through:
   - `compendium` — one pack per document type, browsable. Links are `@UUID[Compendium.world.<vault>-<type>.…]`, because nothing is imported as a unit and the pack copy is the copy.
   - `adventure` — a single Adventure document. Links are **world** UUIDs (`@UUID[JournalEntry.<eid>.JournalEntryPage.<pid>]`), because Foundry's Adventure import creates with `keepId` and updates what already carries the id, so they resolve to the copies the GM imported.
   - `none` — no integration; the deploy drops the importer bundle and `/_batch`.

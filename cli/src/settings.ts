@@ -22,7 +22,6 @@ export interface Settings {
   center_images: boolean;
   preview_mode: string;
   preview_mode_mobile: string;
-  foundry_player_role: string;
   accent_color: string;
   bg_color: string;
   accent_color_dark: string;
@@ -31,12 +30,12 @@ export interface Settings {
   favicon: string;
   auto_image: boolean;
   include_unknown_files: boolean;
+  foundry: FoundrySettings;
   footer: string;
-  foundry_package: FoundryPackage;
   site_url: string;
 }
 
-type SettingType = "string" | "number" | "boolean" | "string[]" | "rules";
+type SettingType = "string" | "number" | "boolean" | "string[]" | "rules" | "object";
 
 /**
  * How a vault's content is packaged for Foundry, which decides both what a
@@ -51,6 +50,28 @@ type SettingType = "string" | "number" | "boolean" | "string[]" | "rules";
  * page pointing at a second copy of the thing beside it.
  */
 export type FoundryPackage = "none" | "compendium" | "adventure";
+
+/**
+ * Everything this vault says about Foundry, under one key.
+ *
+ * Named the way a page names it. `foundry:` in frontmatter already means "the
+ * Foundry facts about this thing", and three `foundry_*` scalars scattered
+ * through settings.md were the same idea spelled differently.
+ */
+export interface FoundrySettings {
+  /** How the vault is packaged: browsable packs, one Adventure, or nothing. */
+  package: FoundryPackage;
+  /** Highest role players may read; "" means none of it is player-visible. */
+  player_role: string;
+  /** Module manifest for `build --module`; empty means look for module.json. */
+  module: Record<string, unknown>;
+}
+
+export const FOUNDRY_DEFAULTS: FoundrySettings = {
+  package: "compendium",
+  player_role: "",
+  module: {},
+};
 
 const FOUNDRY_PACKAGES: FoundryPackage[] = ["none", "compendium", "adventure"];
 
@@ -142,12 +163,6 @@ const SCHEMA: { [K in keyof Settings]: SettingDef<K> } = {
     description:
       "Internal-link preview behavior on touch (mobile) devices, where there is no hover: 'sticky' (the default) shows a preview on tap with a 'Go to page' link instead of navigating; 'none' disables previews so taps just navigate. ('normal' has no hover to trigger it on touch and behaves like 'none'.)",
   },
-  foundry_player_role: {
-    default: "",
-    type: "string",
-    description:
-      "The highest role your Foundry players are allowed to read. Pages at this role or below import as player-visible (Observer ownership); everything above stays GM-only. Empty string (the default) means none of it is player-visible. Set it to your lowest tier, usually 'public', to share exactly what the wiki shows a signed-out visitor. Must be one of your configured roles. Role-gated callouts above this tier are also hidden inside pages players can see.",
-  },
   accent_color: {
     default: "",
     type: "string",
@@ -196,12 +211,11 @@ const SCHEMA: { [K in keyof Settings]: SettingDef<K> } = {
     description:
       "Ship files with unrecognized extensions to every deploy variant. Default false skips them (with a warning) so a stray file in your vault can't accidentally bypass role gating. Recognized media types (audio/video/pdf/epub) are reference-gated like images regardless of this setting.",
   },
-  foundry_package: {
-    default: "compendium",
-    type: "string",
-    choices: FOUNDRY_PACKAGES,
+  foundry: {
+    default: FOUNDRY_DEFAULTS,
+    type: "object",
     description:
-      "How this vault reaches Foundry VTT. 'adventure' packages it as a single Adventure document: import it once and every internal link resolves to the documents you imported, which is what a campaign or module wants. 'compendium' produces browsable compendium packs, one per document type, which is what a reference library wants \u2014 you look one thing up rather than importing the lot. 'none' ships no Foundry integration at all: the deploy drops the importer bundle (~60KB) and the /_batch sync endpoints it would never use, for a vault that has nothing to do with Foundry. Pages keep their 'foundry:' frontmatter under 'none'; it simply isn't advertised.",
+      "Everything this vault says about Foundry VTT. 'package' is how it is delivered: 'adventure' packages it as one Adventure document, so importing it once makes every internal link resolve to the documents you imported \u2014 what a campaign wants; 'compendium' (the default) produces browsable packs, one per document type, which is what a reference library wants; 'none' ships no integration at all and the deploy drops the importer bundle and sync endpoints. 'player_role' is the highest role your players may read: pages at that role or below import player-visible, everything above stays GM-only, and empty (the default) means none of it is. 'module' is the manifest for 'vaults build --module' \u2014 anything Foundry accepts in a module.json, with only 'packs' written for you; leave it empty and the compiler looks for a module.json at the vault root or in foundry/ instead.",
   },
   site_url: {
     default: "",
@@ -265,6 +279,8 @@ export async function loadSettings(vaultPath: string): Promise<LoadedSettings> {
     (values as unknown as Record<string, unknown>)[key] = v;
   }
 
+  normalizeFoundry(values, warnings);
+
   for (const key of Object.keys(fm)) {
     if (!(key in SCHEMA)) {
       warnings.push(`settings.md: unknown setting '${key}' will be removed on next sync.`);
@@ -293,8 +309,52 @@ function isPlainObject(v: unknown): boolean {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
+/**
+ * Check and fill in the `foundry` block.
+ *
+ * The generic type check only asks whether it is an object, and every key
+ * inside it means something: an unrecognised `package` would silently pick a
+ * delivery shape the author did not ask for, with links baked to match, and a
+ * misspelled subkey would read as an unset default rather than as a mistake.
+ * Missing keys take their defaults, so a vault only states what it changes.
+ */
+function normalizeFoundry(values: Settings, warnings: string[]): void {
+  const raw = (values.foundry ?? {}) as unknown as Record<string, unknown>;
+  for (const key of Object.keys(raw)) {
+    if (!(key in FOUNDRY_DEFAULTS)) {
+      warnings.push(
+        `settings.md: unknown key 'foundry.${key}'. Known: ${Object.keys(FOUNDRY_DEFAULTS).join(", ")}.`,
+      );
+    }
+  }
+
+  const pkg = raw["package"];
+  if (pkg !== undefined && !FOUNDRY_PACKAGES.includes(pkg as FoundryPackage)) {
+    warnings.push(
+      `settings.md: 'foundry.package' should be one of ${FOUNDRY_PACKAGES.join(", ")}, `
+      + `got '${String(pkg)}'. Using '${FOUNDRY_DEFAULTS.package}'.`,
+    );
+  }
+  const role = raw["player_role"];
+  if (role !== undefined && typeof role !== "string") {
+    warnings.push(`settings.md: 'foundry.player_role' should be a role name, got ${describeType(role)}.`);
+  }
+  const module = raw["module"];
+  if (module !== undefined && !isPlainObject(module)) {
+    warnings.push(`settings.md: 'foundry.module' should be a manifest object, got ${describeType(module)}.`);
+  }
+
+  values.foundry = {
+    package: FOUNDRY_PACKAGES.includes(pkg as FoundryPackage)
+      ? pkg as FoundryPackage : FOUNDRY_DEFAULTS.package,
+    player_role: typeof role === "string" ? role : FOUNDRY_DEFAULTS.player_role,
+    module: isPlainObject(module) ? module as Record<string, unknown> : {},
+  };
+}
+
 function matchesType(v: unknown, t: SettingType): boolean {
   if (t === "string[]") return Array.isArray(v) && v.every((item) => typeof item === "string");
+  if (t === "object") return isPlainObject(v);
   if (t === "rules") {
     return Array.isArray(v) && v.every((item) =>
       isPlainObject(item)
@@ -316,7 +376,15 @@ function renderSettingsFile(values: Settings): string {
   for (const [key, def] of Object.entries(SCHEMA) as [keyof Settings, SettingDef<keyof Settings>][]) {
     lines.push(`# ${def.description}`);
     const value = (values as unknown as Record<string, unknown>)[key];
-    if (def.type === "rules") {
+    if (def.type === "object") {
+      const obj = (value ?? {}) as Record<string, unknown>;
+      if (Object.keys(obj).length === 0) {
+        lines.push(`${key}: {}`);
+      } else {
+        lines.push(`${key}:`);
+        for (const line of dumpYaml(obj).trimEnd().split("\n")) lines.push(`  ${line}`);
+      }
+    } else if (def.type === "rules") {
       const rules = (value ?? []) as unknown[];
       if (rules.length === 0) {
         lines.push(`${key}: []`);
