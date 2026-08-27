@@ -258,7 +258,7 @@ test("a pinned foundry.id is honoured instead of the derived one", async () => {
 // may say nothing at all — so the note was placed against 4000x3000 at grid
 // 100 and landed somewhere arbitrary on a map of any other size.
 
-import { notePosition } from "../scripts/instance.mjs";
+import { notePosition, wantsJournalNote } from "../scripts/instance.mjs";
 
 test("places the note against the scene's own geometry", () => {
   // 2100x2100 at grid 140, padding 0.25: origin is ceil(15 * 0.25) = 4 cells,
@@ -366,4 +366,26 @@ test("falls back to the bundle's own text when the module predates the key", () 
 
 test("leaves an unknown placeholder alone rather than printing undefined", () => {
   assert.equal(localizeOr(OLD, "MISSING", "{count} of {total}", { count: 1 }), "1 of {total}");
+});
+
+// `journal: false` and the auto Map Note ---------------------------------
+//
+// The note links a Scene back to its source article. `journal: false` deletes
+// that article — it exists for pages whose only job is to make a document —
+// so the note was being pinned at a JournalEntryPage the same sync had just
+// removed: a pin that opens nothing.
+
+test("no journal means no journal note", () => {
+  assert.equal(wantsJournalNote("Scene", { journal: false }), false);
+});
+
+test("a scene with an article still gets one", () => {
+  assert.equal(wantsJournalNote("Scene", {}), true);
+  assert.equal(wantsJournalNote("Scene", { journal: true }), true);
+  assert.equal(wantsJournalNote("Scene", undefined), true);
+});
+
+test("only Scenes get one at all", () => {
+  assert.equal(wantsJournalNote("Actor", {}), false);
+  assert.equal(wantsJournalNote("Playlist", {}), false);
 });

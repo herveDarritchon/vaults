@@ -79,6 +79,21 @@ const COLLECTION_FOR = {
  *   `{ ok: false, reason }` when a declared base produced no document.
  *   Callers count these; every non-ok path also warns with specifics.
  */
+/**
+ * Whether a page's document should carry the automatic Map Note.
+ *
+ * Only a Scene has anywhere to put one, and `journal: false` deletes the page's
+ * JournalEntry — it exists for pages whose only job is to make a document — so
+ * a note would name a page the same sync just removed. The note is how you get
+ * from a scene back to its article; with no article there is nowhere to go.
+ *
+ * Exported because both the create and update paths ask, and because a test
+ * that reimplements this would keep passing while the real thing drifted.
+ */
+export function wantsJournalNote(docName, fm) {
+  return docName === "Scene" && fm?.journal !== false;
+}
+
 export async function applyInstance(vault, vaultPath, meta, { forceFull = false } = {}) {
   const fm = meta?.foundry;
   // No foundry block at all → nothing to instantiate.
@@ -173,7 +188,7 @@ export async function applyInstance(vault, vaultPath, meta, { forceFull = false 
     // mention them at all. Re-placing the note each sync also puts it back
     // if a GM moved it, which is the same "the vault is the source of truth"
     // rule the rest of the overlay follows.
-    if (docName === "Scene") {
+    if (wantsJournalNote(docName, fm)) {
       // Geometry is read separately so the patch is not padded out with
       // dimensions the update never meant to change.
       await attachJournalNote(updatePatch, {
@@ -212,7 +227,9 @@ export async function applyInstance(vault, vaultPath, meta, { forceFull = false 
   deepMerge(baseData, overlay);
   // After the merges, so the note is placed against the geometry the scene
   // actually ends up with rather than whatever the frontmatter happened to say.
-  if (docName === "Scene") await attachJournalNote(baseData, baseData, vault, vaultPath, meta);
+  if (wantsJournalNote(docName, fm)) {
+    await attachJournalNote(baseData, baseData, vault, vaultPath, meta);
+  }
   if (baseItems && baseData.items !== baseItems) {
     baseData.items = mergeItemsById(baseItems, baseData.items);
   }
