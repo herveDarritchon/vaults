@@ -856,11 +856,18 @@ export function assembleRollTableResults(
     const isDoc = uuid.length > 0;
     const text = typeof r["text"] === "string" ? r["text"] : "";
     const stated = (field: string) => typeof r[field] === "string" ? r[field] as string : null;
+    // What a text result *shows* is its description. `name` is a short title,
+    // and is empty in every table Foundry itself ships. So a result that
+    // states only a name is one an author wrote the text of and would see
+    // rendered blank; treat it as the body, which is what they meant. A
+    // document result is the other way round: the name labels the link.
+    const lone = !isDoc && stated("name") !== null
+      && stated("description") === null && !text;
     return {
       _id: rid,
       type: isDoc ? "document" : "text",
-      name: stated("name") ?? (isDoc ? text : ""),
-      description: stated("description") ?? (isDoc ? "" : text),
+      name: lone ? "" : (stated("name") ?? (isDoc ? text : "")),
+      description: lone ? stated("name")! : (stated("description") ?? (isDoc ? "" : text)),
       ...(isDoc ? { documentUuid: uuid } : {}),
       img: r["img"] ?? "icons/svg/d20-black.svg",
       weight: r["weight"] ?? 1,
@@ -944,6 +951,42 @@ interface PackBucket {
 }
 
 /** Write the packs, the manifest and the zip, and report what was left out. */
+/**
+ * Copy the vault's Foundry-targeted handler assets into the module.
+ *
+ * A handler that ships browser assets renders a placeholder at build time and
+ * fills it in at runtime — so without its script the page is a blank gap,
+ * which is what a compiled module produced. Sync solves this by fetching
+ * `_handlers.foundry.*` from the deploy; a module has no deploy to fetch from,
+ * so it carries them and declares them itself.
+ *
+ * Appended to whatever the author declared rather than replacing it: these are
+ * the vault's assets, and the module's own scripts and styles are its own.
+ */
+async function bundleHandlerAssets(
+  opts: ModuleOptions, manifest: Record<string, unknown>, moduleDir: string,
+): Promise<void> {
+  if (!opts.renderedDir) return;
+  for (const [kind, file, key] of [
+    ["script", "_handlers.foundry.js", "scripts"],
+    ["style", "_handlers.foundry.css", "styles"],
+  ] as const) {
+    const candidates = opts.renderedRole
+      ? [join(opts.renderedDir, "_variants", opts.renderedRole, file), join(opts.renderedDir, file)]
+      : [join(opts.renderedDir, file)];
+    let content: string | null = null;
+    for (const c of candidates) {
+      try { content = await readFile(c, "utf8"); break; } catch { /* try the other layout */ }
+    }
+    if (content === null) continue;
+    const name = file.replace(/^_/, "");
+    await writeFile(join(moduleDir, name), content);
+    const declared = Array.isArray(manifest[key]) ? manifest[key] as string[] : [];
+    if (!declared.includes(name)) manifest[key] = [...declared, name];
+    console.log(`    bundled the vault's handler ${kind}s as ${name}`);
+  }
+}
+
 async function finishModule(
   opts: ModuleOptions,
   manifest: Record<string, unknown>,
@@ -1086,6 +1129,7 @@ async function finishModule(
   // module.json is theirs and survives.
   manifest["packs"] = packs;
   fileNewPacks(manifest, packNames);
+  await bundleHandlerAssets(opts, manifest, moduleDir);
   const zipName = `${moduleId}-${version}.zip`;
   let manifestPath: string;
   let zipPath = "";

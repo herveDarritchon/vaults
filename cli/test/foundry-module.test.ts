@@ -101,13 +101,35 @@ describe("roll table results", () => {
   const results = (doc: Record<string, unknown>) =>
     doc["results"] as Array<Record<string, unknown>>;
 
-  it("keeps the prose the page wrote", () => {
-    // The shape the landing demo documents and the sync path passes through.
-    // Overwriting it compiled every row to a blank one.
+  it("puts a text result's only prose where Foundry shows it", () => {
+    // A text result renders its `description`; `name` is a short title, and is
+    // empty in every table Foundry itself ships (checked against the DMG and
+    // PHB packs in a live v14 world). So a page that writes the row as `name:`
+    // — which reads perfectly naturally — compiled to a table of blank rows.
     const doc: Record<string, unknown> = { results: [{ range: [1, 1], name: "A weary ranger." }] };
     assembleRollTableResults(doc, "table0000000001", {});
-    assert.equal(results(doc)[0]!["name"], "A weary ranger.");
+    assert.equal(results(doc)[0]!["description"], "A weary ranger.");
+    assert.equal(results(doc)[0]!["name"], "", "the title stays empty, as Foundry's own tables have it");
     assert.equal(results(doc)[0]!["type"], "text");
+  });
+
+  it("leaves a name alone when the row also has a body", () => {
+    // Then the author meant both, and the title is a title.
+    const doc: Record<string, unknown> = {
+      results: [{ name: "Ranger", description: "A weary ranger." }],
+    };
+    assembleRollTableResults(doc, "table0000000001", {});
+    assert.equal(results(doc)[0]!["name"], "Ranger");
+    assert.equal(results(doc)[0]!["description"], "A weary ranger.");
+  });
+
+  it("a document result keeps its name as the link label", () => {
+    const doc: Record<string, unknown> = {
+      results: [{ uuid: "Compendium.x.y.Actor.z", name: "Owlbear" }],
+    };
+    assembleRollTableResults(doc, "table0000000001", {});
+    assert.equal(results(doc)[0]!["name"], "Owlbear");
+    assert.equal(results(doc)[0]!["type"], "document");
   });
 
   it("still reads Foundry's pre-13 `text`, the way Foundry migrates it", () => {
