@@ -1,7 +1,7 @@
 // Render a vault page's markdown body into Foundry-flavoured description HTML,
 // and build a pack's compendium folders.
 //
-// Ported from the standalone vfmc compiler so `vaults build --module` can
+// Ported from the standalone compiler this replaced, so `vaults build --module` can
 // replace it. A vault body is Obsidian/vaults markdown; a Foundry sheet wants
 // HTML with native inline rolls and Compendium @UUID cross-links.
 

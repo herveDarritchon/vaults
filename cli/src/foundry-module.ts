@@ -520,7 +520,7 @@ export async function buildFoundryModule(opts: ModuleOptions): Promise<ModuleRes
   const version = typeof manifest["version"] === "string" ? manifest["version"] : "0.0.0";
   const stats = statsFor(manifest);
   const flags = (manifest["flags"] ?? {}) as Record<string, Record<string, unknown>>;
-  const decls = ((flags["vaults"]?.["packs"] ?? flags["vfmc"]?.["packs"]) ?? []) as PackDecl[];
+  const decls = (flags["vaults"]?.["packs"] ?? []) as PackDecl[];
 
   // Which roles may be redistributed.
   //
@@ -934,7 +934,7 @@ async function finishModule(
 
   const packs: Array<Record<string, unknown>> = [];
   const packNames: string[] = [];
-  // Declared on every pack, the way vfmc did: Foundry only demands it for
+  // Declared on every pack: Foundry only demands it for
   // Actor and Item packs, but a module whose packs disagree about which
   // system they belong to is not a thing worth being able to express.
   const systemId = systemIdOf(manifest);
@@ -1037,7 +1037,7 @@ async function finishModule(
   }
   if (assets.size > 0) console.log(`    ${assets.size} asset(s) bundled`);
 
-  // Own only `packs`, the way vfmc does: everything else the author put in
+  // Own only `packs`: everything else the author put in
   // module.json is theirs and survives.
   manifest["packs"] = packs;
   fileNewPacks(manifest, packNames);

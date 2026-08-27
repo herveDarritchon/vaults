@@ -1,4 +1,4 @@
-# `cli/` and `foundry-compiler/` are TypeScript pnpm workspace packages.
+# `cli/` is the one TypeScript pnpm workspace package.
 # `foundry/` is a Foundry VTT module loaded directly as `.mjs` at runtime by
 # Foundry (no bundler, no package.json), and `landing/` is a vault content
 # directory (markdown, images), not a node project. Adding either here would
@@ -9,4 +9,3 @@
 # quoted, so Node expands it rather than the shell).
 packages:
   - cli
-  - foundry-compiler

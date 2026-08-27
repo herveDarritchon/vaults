@@ -1,5 +1,5 @@
 #!/bin/bash
-# Unified release across cli + foundry + foundry-compiler. Bumps all to the
+# Unified release across cli + foundry. Bumps both to the
 # same version, tags the monorepo, then runs each subproject's release pipeline.
 #
 # Usage:
@@ -7,7 +7,6 @@
 #   ./release.sh 1.1.0
 #   ./release.sh 1.1.0 --skip-cli        # skip cli npm publish
 #   ./release.sh 1.1.0 --skip-foundry    # skip Foundry release.sh
-#   ./release.sh 1.1.0 --skip-compiler   # skip foundry-compiler npm publish
 #
 # Prereqs:
 #   - jq, gh, npm, pnpm on PATH
@@ -22,12 +21,10 @@ set -e
 NEW_VERSION=""
 SKIP_CLI=0
 SKIP_FOUNDRY=0
-SKIP_COMPILER=0
 for arg in "$@"; do
   case "$arg" in
     --skip-cli)      SKIP_CLI=1 ;;
     --skip-foundry)  SKIP_FOUNDRY=1 ;;
-    --skip-compiler) SKIP_COMPILER=1 ;;
     --*) echo "Unknown flag: $arg"; exit 1 ;;
     *)
       if [[ -n "$NEW_VERSION" ]]; then
@@ -48,7 +45,6 @@ command -v npm  >/dev/null || { echo "Error: npm required"; exit 1; }
 
 CURRENT_CLI=$(jq -r '.version' cli/package.json)
 CURRENT_FOUNDRY=$(jq -r '.version' foundry/module.json)
-CURRENT_COMPILER=$(jq -r '.version' foundry-compiler/package.json)
 
 # No version on the command line: offer a bump menu computed from the cli version.
 if [[ -z "$NEW_VERSION" ]]; then
@@ -86,7 +82,6 @@ fi
 echo "Current versions:"
 echo "  cli:              $CURRENT_CLI"
 echo "  foundry:          $CURRENT_FOUNDRY"
-echo "  foundry-compiler: $CURRENT_COMPILER"
 echo "Releasing as: $NEW_VERSION"
 echo ""
 read -p "Continue? (y/n) " -n 1 -r
@@ -111,14 +106,11 @@ mv cli/package.json.tmp cli/package.json
 jq --arg v "$NEW_VERSION" '.version = $v' foundry/module.json > foundry/module.json.tmp
 mv foundry/module.json.tmp foundry/module.json
 
-# Bump foundry-compiler/package.json
-jq --arg v "$NEW_VERSION" '.version = $v' foundry-compiler/package.json > foundry-compiler/package.json.tmp
-mv foundry-compiler/package.json.tmp foundry-compiler/package.json
 
 # Single commit + tag for the monorepo. If versions were already at the
 # target (user pre-bumped, or re-running after a partial failure), skip
 # the commit but still tag the current HEAD.
-git add cli/package.json foundry/module.json foundry-compiler/package.json
+git add cli/package.json foundry/module.json
 if git diff --cached --quiet; then
   echo "Versions already at $NEW_VERSION; skipping release commit."
 else
@@ -144,13 +136,6 @@ if [[ $SKIP_CLI -eq 0 ]]; then
   echo "=== Publishing CLI to npm ==="
   pnpm --filter @wizzlethorpe/vaults run build
   pnpm --filter @wizzlethorpe/vaults publish --access public --no-git-checks
-fi
-
-if [[ $SKIP_COMPILER -eq 0 ]]; then
-  echo ""
-  echo "=== Publishing foundry-compiler to npm ==="
-  pnpm --filter @wizzlethorpe/vaults-foundry-compiler run build
-  pnpm --filter @wizzlethorpe/vaults-foundry-compiler publish --access public --no-git-checks
 fi
 
 if [[ $SKIP_FOUNDRY -eq 0 ]]; then

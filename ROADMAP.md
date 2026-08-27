@@ -68,7 +68,7 @@ It does **not** touch the barrier that actually stops people. Needing a Cloudfla
 
 Practical note: `sharp` (native binary) and `wrangler` are the two dependencies that make bundling awkward. `image_quality: 0` already skips sharp at runtime, so a degraded no-compression path is close to free if needed.
 
-## 4. Foundry module compilation (vfmc)
+## 4. Foundry module compilation
 
 **Live sync is the primary path. Keep it that way.** Every problem the compile-to-module route runs into is a problem sync does not have:
 
@@ -83,24 +83,28 @@ Practical note: `sharp` (native binary) and `wrangler` are the two dependencies 
 
 The one thing sync cannot do is **distribution to strangers**: a live-sync vault can't go on the Foundry package listing, because the installer needs a URL, a token, and the module.
 
-### vfmc is internal and not ready
+### The compiler is `vaults build --module`
 
-Do not advertise it on the landing site. It is published to npm (`release.sh` does so with `--access public` on every release), which is fine, but nothing should point users at it yet.
+vfmc, the standalone `@wizzlethorpe/vaults-foundry-compiler`, is gone. It has been replaced by `vaults build --module`, which reads the same vault the wiki does and shares its rendering, its id derivation and its reading of `foundry.base`. The eight gaps recorded here as open are all closed:
 
-What it actually is today: a compendium-pack compiler for a vault's `Compendium/` subtree, with WANDS as its one real user. Known gaps:
+| vfmc | now |
+|---|---|
+| A hand-authored `data_json` sidecar per page (613 of them in WANDS) | Optional; pages carry their own frontmatter |
+| 3 document types against sync's 8 | All 8 |
+| Hardcoded `systemId` / `systemVersion` / `coreVersion` | Read from the manifest, including `relationships.requires` |
+| UUID `foundry.base` unsupported, with an error naming neither cause nor fix | Supported, and unbuildable rungs are reported per page |
+| Hand-written `flags.vfmc.packs` | `flags.vaults.packs`, optional; a default pack per document type otherwise |
+| A different id scheme than sync, so the two disagreed | One scheme, held by `foundry-base-conformance.test.ts` |
+| Its own wikilink and markdown rendering | Shared with the sync path |
+| Compendium documents only | Journals too, and `foundry_package: adventure` compiles the whole vault into one importable Adventure |
 
-1. Requires a hand-authored `data_json` sidecar for every non-RollTable page (`assembleDoc` dereferences `page.foundry.data_json!` unconditionally). WANDS carries 613 sidecars for 668 pages.
-2. Supports 3 document types (Item, Actor, RollTable) against the sync module's 8.
-3. Hardcodes `DEFAULT_STATS`: `systemId: dnd5e`, `systemVersion: 5.3.0`, `coreVersion: 14.359`. Already stale; a live world reports 5.3.3 / 14.367.
-4. Ignores the UUID form of `foundry.base` and fails with `unsupported foundry.base type`, which names neither cause nor fix. It should report those pages as sync-only.
-5. Needs hand-written `flags.vfmc.packs` in `module.json`.
-6. Derives ids with a different scheme than the sync module (base64-filtered vs hex), so the two disagree for the same page.
-7. Reimplements wikilink and markdown rendering separately from `links.mjs`.
-8. Compiles compendium documents only. A vault's pages don't come along, so it is not "compile a vault".
+Parity was checked against vfmc's own output before it was removed: 699 of 699 WANDS documents byte-identical, the only differences being the journal pack the old compiler had no concept of.
+
+What is still true is the section above. Distribution to strangers is the one thing sync cannot do, and a compiled module is how that happens; everything else is easier live.
 
 ### Compendium-only modules already work
 
-For **vault-authored** content the offline path is done and shipping. WANDS is 648 pages of blank-type bases (`Item:feat`, `Actor:npc`, `RollTable`, …) with sidecars, and vfmc compiles complete LevelDB packs with no Foundry in the loop. The base data is in the vault, so nothing needs resolving.
+For **vault-authored** content the offline path is done and shipping. WANDS is hundreds of pages of blank-type bases (`Item:feat`, `Actor:npc`, `RollTable`, …), and the compiler writes complete LevelDB packs with no Foundry in the loop. The base data is in the vault, so nothing needs resolving.
 
 Only the **UUID-clone** form has the problem, and even then Foundry itself is not required: the source pack is a LevelDB directory on disk and `@foundryvtt/foundryvtt-cli` reads it as plain Node (`molten unpack` does exactly this). The real constraint is provenance and rights, not runtime.
 
