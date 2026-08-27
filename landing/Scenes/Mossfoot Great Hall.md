@@ -121,12 +121,20 @@ becomes a real `Scene` you can navigate to from the scene sidebar; both
 the background image and the audio are pulled into the per-vault cache
 and served locally, no deploy URL involved.
 
-![[mossfoot-great-hall.webp|600]]
+```battlemap
+grid: 140
+default_level: 0
+name: Mossfoot Great Hall
+levels:
+  - name: Empty Hall
+    layers:
+      - "attachments/mossfoot-great-hall.webp"
+  - name: Feast Laid
+    layers:
+      - "attachments/mossfoot-great-hall-feast.webp"
+```
 
-The empty hall above is the background. With the [[Toggle feast]] macro
-flipped on, the dinner overlay drapes across the room:
-
-![[mossfoot-great-hall-feast.webp|600]]
+Use the [[Toggle feast]] macro in foundry to toggle the dinner overlay.
 
 And the ambient track that plays while you're in the scene:
 
