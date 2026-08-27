@@ -115,6 +115,48 @@ export function systemIdOf(manifest: Record<string, unknown>): string | null {
   return null;
 }
 
+/**
+ * Put a pack the compiler created into the author's folder tree.
+ *
+ * `packFolders` is hand-authored and names its packs one by one, so a pack
+ * that did not exist when it was written belongs to no folder and lands loose
+ * at the top of the compendium sidebar, outside the module's own folder. That
+ * happened the first time the journal pack appeared, and would happen again
+ * for every document type a vault starts using.
+ *
+ * Deliberately narrow. It only adds, never moves or removes: a pack the author
+ * has filed somewhere is filed where they wanted it, and the tree they built
+ * is theirs. Without a `packFolders` there is nothing to be outside of, so
+ * nothing to do.
+ */
+export function fileNewPacks(manifest: Record<string, unknown>, packNames: string[]): void {
+  const tree = manifest["packFolders"];
+  if (!Array.isArray(tree) || tree.length === 0) return;
+
+  const filed = new Set<string>();
+  const walk = (folders: unknown[]) => {
+    for (const raw of folders) {
+      if (!raw || typeof raw !== "object") continue;
+      const folder = raw as Record<string, unknown>;
+      for (const name of Array.isArray(folder["packs"]) ? folder["packs"] : []) {
+        if (typeof name === "string") filed.add(name);
+      }
+      if (Array.isArray(folder["folders"])) walk(folder["folders"]);
+    }
+  };
+  walk(tree);
+
+  const loose = packNames.filter((n) => !filed.has(n));
+  if (loose.length === 0) return;
+
+  // The first top-level folder, which is the module's own by convention: the
+  // tree exists to gather its packs under one heading in the sidebar.
+  const root = tree[0] as Record<string, unknown>;
+  const existing = Array.isArray(root["packs"]) ? root["packs"] : [];
+  root["packs"] = [...existing, ...loose];
+  console.log(`    filed ${loose.join(", ")} under "${root["name"]}"`);
+}
+
 function statsFor(manifest: Record<string, unknown>): Record<string, unknown> {
   const compat = (manifest["compatibility"] ?? {}) as Record<string, unknown>;
   const rel = (manifest["relationships"] ?? {}) as Record<string, unknown>;
@@ -997,6 +1039,7 @@ async function finishModule(
   // Own only `packs`, the way vfmc does: everything else the author put in
   // module.json is theirs and survives.
   manifest["packs"] = packs;
+  fileNewPacks(manifest, packNames);
   const zipName = `${moduleId}-${version}.zip`;
   let manifestPath: string;
   let zipPath = "";

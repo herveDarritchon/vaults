@@ -215,3 +215,45 @@ describe("pack system declarations", () => {
     assert.equal(systemIdOf({ relationships: { requires: [{ id: "babele", type: "module" }] } }), null);
   });
 });
+
+describe("packFolders", () => {
+  it("files a newly created pack under the module's own folder", async () => {
+    // packFolders is hand-authored and names its packs one by one, so a pack
+    // that did not exist when it was written lands loose at the top of the
+    // compendium sidebar, outside the module's folder. That is what happened
+    // the first time the journal pack appeared.
+    const { fileNewPacks } = await import("../src/foundry-module.js");
+    const manifest: Record<string, unknown> = {
+      packFolders: [{
+        name: "WANDS",
+        packs: ["wands-roll-tables"],
+        folders: [{ name: "Items & Spells", packs: ["items-wands"], folders: [] }],
+      }],
+    };
+    fileNewPacks(manifest, ["wands-roll-tables", "items-wands", "wands-journal"]);
+    const root = (manifest["packFolders"] as Array<Record<string, unknown>>)[0]!;
+    assert.deepEqual(root["packs"], ["wands-roll-tables", "wands-journal"]);
+  });
+
+  it("leaves a pack filed in a nested folder where the author put it", async () => {
+    const { fileNewPacks } = await import("../src/foundry-module.js");
+    const manifest: Record<string, unknown> = {
+      packFolders: [{
+        name: "WANDS", packs: [],
+        folders: [{ name: "Deep", packs: ["spells-wands"], folders: [] }],
+      }],
+    };
+    fileNewPacks(manifest, ["spells-wands"]);
+    const root = (manifest["packFolders"] as Array<Record<string, unknown>>)[0]!;
+    assert.deepEqual(root["packs"], [], "must not be pulled up out of its folder");
+  });
+
+  it("does nothing when the author declared no folders", async () => {
+    // Nothing to be outside of, so nothing to fix — and inventing a tree would
+    // be restructuring a sidebar the author never asked us to touch.
+    const { fileNewPacks } = await import("../src/foundry-module.js");
+    const manifest: Record<string, unknown> = {};
+    fileNewPacks(manifest, ["wands-journal"]);
+    assert.equal(manifest["packFolders"], undefined);
+  });
+});
