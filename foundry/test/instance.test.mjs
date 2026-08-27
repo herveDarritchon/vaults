@@ -247,3 +247,123 @@ test("a pinned foundry.id is honoured instead of the derived one", async () => {
     assert.deepEqual(missing, []);
   });
 });
+
+// --- the journal-link Map Note -----------------------------------------
+//
+// The note is placed half a grid cell off the map's grid-aligned top-left
+// corner. Its geometry used to be read from the page's frontmatter, which is
+// only right when the page carries the whole scene in `data_json`. A Scene
+// cloned from a compendium UUID, or resolved from a Moulinette document, takes
+// its width, height, grid and padding from the template, and the frontmatter
+// may say nothing at all — so the note was placed against 4000x3000 at grid
+// 100 and landed somewhere arbitrary on a map of any other size.
+
+import { notePosition } from "../scripts/instance.mjs";
+
+test("places the note against the scene's own geometry", () => {
+  // 2100x2100 at grid 140, padding 0.25: origin is ceil(15 * 0.25) = 4 cells,
+  // so 560. Half a cell left of that is 490, half a cell below is 630.
+  assert.deepEqual(
+    notePosition({ width: 2100, height: 2100, padding: 0.25, grid: { size: 140 } }),
+    { x: 490, y: 630 },
+  );
+});
+
+test("a differently-sized scene gets a different corner", () => {
+  // The bug: this is what every template-derived Scene used to get, whatever
+  // its real size, because the frontmatter carried no dimensions.
+  assert.deepEqual(
+    notePosition({}),
+    { x: 950, y: 850 },
+    "the fallback, which should now only apply when nothing knows better",
+  );
+  assert.deepEqual(
+    notePosition({ width: 4200, height: 2800, padding: 0.25, grid: { size: 140 } }),
+    { x: 1050, y: 770 },
+  );
+});
+
+test("rounds the origin up to a whole cell, as Foundry does", () => {
+  // 2100/140 * 0.25 = 3.75 cells of padding, and Foundry uses 4.
+  const { x } = notePosition({ width: 2100, height: 2100, padding: 0.25, grid: { size: 140 } });
+  assert.equal(x, 140 * 3.5, "not 140 * (3.75 - 0.5)");
+});
+
+// --- Foundry generation skew -------------------------------------------
+//
+// Creators re-export for each Foundry generation, and a back catalogue can be
+// a generation behind: The MAD Cartographer's newer packs are native v14 while
+// everything older is 13.344. A stale document mostly migrates — a v13 Scene
+// keeps all 153 walls, 17 lights and 10 sounds — but v14 moved the map onto
+// Level and draws that scene's tiles at the canvas origin instead of their
+// stored x/y. We import anyway and report it, rather than dropping work that
+// did survive or leaving the reader to wonder why a map looks wrong.
+
+import { generationSkew } from "../scripts/instance.mjs";
+
+function withRelease(generation, fn) {
+  const prev = globalThis.game;
+  globalThis.game = { release: { generation } };
+  try { return fn(); } finally { globalThis.game = prev; }
+}
+
+test("reports a document exported for an older generation", () => {
+  withRelease(14, () => {
+    const skew = generationSkew({ _stats: { coreVersion: "13.344" } }, "12977/json/scene/x.json");
+    assert.equal(skew?.exported, "13.344");
+    assert.equal(skew?.world, 14);
+    assert.equal(skew?.ref, "12977/json/scene/x.json");
+  });
+});
+
+test("says nothing when the generations agree", () => {
+  // Patch and minor differences inside one generation are exactly what
+  // Foundry's own document migration absorbs.
+  withRelease(14, () => {
+    assert.equal(generationSkew({ _stats: { coreVersion: "14.361" } }, "r"), null);
+    assert.equal(generationSkew({ _stats: { coreVersion: "14.367" } }, "r"), null);
+  });
+});
+
+test("reports a newer export too, not just an older one", () => {
+  withRelease(13, () => {
+    assert.equal(generationSkew({ _stats: { coreVersion: "14.364" } }, "r")?.world, 13);
+  });
+});
+
+test("stays quiet when either version is unreadable", () => {
+  // A document with no _stats is not evidence of a problem.
+  withRelease(14, () => {
+    assert.equal(generationSkew({}, "r"), null);
+    assert.equal(generationSkew({ _stats: {} }, "r"), null);
+  });
+  withRelease(undefined, () => {
+    assert.equal(generationSkew({ _stats: { coreVersion: "13.344" } }, "r"), null);
+  });
+});
+
+// --- bundle strings vs installed-module strings -------------------------
+//
+// The sync code is bundled by the CLI and ships with the vault; lang/en.json
+// ships with the installed module. They update on different schedules by
+// design, so a message the bundle introduces reaches modules that have never
+// heard of its key — and Foundry's i18n returns the key itself when it cannot
+// resolve one, which showed a GM a warning that read "VAULTS.Sync.VersionSkew".
+
+import { localizeOr } from "../scripts/util.mjs";
+
+const CURRENT = { localize: (k, a) => (k === "KNOWN" ? `translated ${a?.count}` : k) };
+const OLD = { localize: (k) => k };
+
+test("prefers the module's translation when it has one", () => {
+  assert.equal(localizeOr(CURRENT, "KNOWN", "fallback {count}", { count: 2 }), "translated 2");
+});
+
+test("falls back to the bundle's own text when the module predates the key", () => {
+  assert.equal(localizeOr(OLD, "MISSING", "{count} document(s) skewed", { count: 3 }),
+    "3 document(s) skewed");
+});
+
+test("leaves an unknown placeholder alone rather than printing undefined", () => {
+  assert.equal(localizeOr(OLD, "MISSING", "{count} of {total}", { count: 1 }), "1 of {total}");
+});

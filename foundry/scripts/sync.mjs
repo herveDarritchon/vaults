@@ -12,6 +12,8 @@ import { fetchManifest, fetchSourceBatch } from "./api.mjs";
 import { upsertFile, deleteFile, buildFolderInfo, reconcileEntryPlacement, reconcileOwnership } from "./importer.mjs";
 import { buildPathIndex } from "./links.mjs";
 import { syncImages } from "./media.mjs";
+import { localizeOr } from "./util.mjs";
+import * as progress from "./progress.mjs";
 import { applyInstance, deleteInstance, findMissingDocuments, missingBasePackages } from "./instance.mjs";
 import { instanceId } from "./ids.mjs";
 import { tokenInfo } from "./auth.mjs";
@@ -75,7 +77,24 @@ async function orderByBaseDeps(vault, paths, bodyMetaIndex) {
  *                                      // its hash is not recorded, so it retries
  *   }
  */
-export async function sync(host, vault, { forceFull = false } = {}) {
+/**
+ * Run a sync, always closing the progress bar afterwards.
+ *
+ * The bar is a permanent notification, so any path out of runSync — an early
+ * return for an up-to-date vault, a failed fetch, an unexpected throw — has to
+ * take it down. A wrapper does that once; the alternative was an end() call at
+ * each of the exits, which is the kind of thing that stays correct only until
+ * someone adds the next return.
+ */
+export async function sync(host, vault, opts = {}) {
+  try {
+    return await runSync(host, vault, opts);
+  } finally {
+    progress.end();
+  }
+}
+
+async function runSync(host, vault, { forceFull = false } = {}) {
   if (!vault?.url) {
     host.notify("error", host.localize("VAULTS.Sync.NoUrl"));
     return { ok: false, refreshHandlerAssets: false };
@@ -98,6 +117,7 @@ export async function sync(host, vault, { forceFull = false } = {}) {
 
   const start = Date.now();
   host.notify("info", host.localize("VAULTS.Sync.StartingNamed", { name: vault.label }));
+  progress.begin(vault.label);
 
   let manifest;
   try {
@@ -303,6 +323,10 @@ export async function sync(host, vault, { forceFull = false } = {}) {
   let added = 0, modified = 0, instances = 0;
   // Pages that declared foundry.base but produced no document: { path, reason }.
   const skipped = [];
+  // Documents that resolved but were exported for a different Foundry
+  // generation. Imported anyway — most of a stale document migrates — and
+  // reported together at the end, where a reader will actually see it.
+  const versionSkew = [];
   // Body paths whose sync failed. Their hash must not be recorded as synced:
   // the next run diffs the manifest against what we persist here, so a failed
   // page that looks synced is never fetched again and the failure becomes
@@ -312,7 +336,9 @@ export async function sync(host, vault, { forceFull = false } = {}) {
   // and dropped for pages that left the manifest.
   const mediaRefs = {};
   for (const p of bodyPaths) if (lastMediaRefs[p]) mediaRefs[p] = lastMediaRefs[p];
+  progress.phase("Pages", toUpsert.length);
   for (const bodyPath of toUpsert) {
+    progress.step(bodyPath.replace(/\.body\.html$/i, "").split("/").pop());
     const html = bodies.get(bodyPath);
     if (html == null) {
       console.warn(`Vaults | server returned no content for ${bodyPath}`);
@@ -343,8 +369,10 @@ export async function sync(host, vault, { forceFull = false } = {}) {
           // A declared base that produced no document returns { ok: false }
           // rather than throwing, so counting calls instead of outcomes would
           // report every skipped page as a success.
-          if (outcome?.ok) instances++;
-          else if (outcome) skipped.push({ path: logicalPath, reason: outcome.reason });
+          if (outcome?.ok) {
+            instances++;
+            if (outcome.skew) versionSkew.push({ path: logicalPath, ...outcome.skew });
+          } else if (outcome) skipped.push({ path: logicalPath, reason: outcome.reason });
         } catch (err) {
           console.warn(`Vaults | foundry instantiation failed for ${logicalPath}:`, err);
           skipped.push({ path: logicalPath, reason: "threw" });
@@ -358,8 +386,10 @@ export async function sync(host, vault, { forceFull = false } = {}) {
 
   let removed = 0;
   const failedDeletes = new Set();
+  if (toDelete.length > 0) progress.phase("Removing", toDelete.length);
   for (const bodyPath of toDelete) {
     const logicalPath = bodyPath.replace(/\.body\.html$/i, ".md");
+    progress.step(logicalPath.split("/").pop());
     try { await deleteFile(vault, logicalPath); removed++; }
     catch (err) {
       console.warn(`Vaults | delete failed for ${logicalPath}:`, err);
@@ -414,6 +444,20 @@ export async function sync(host, vault, { forceFull = false } = {}) {
   if (instances > 0) console.info(`Vaults | ${vault.label} instantiated ${instances} document(s) from page foundry.base.`);
   // A silent skip here used to look like a clean sync: the journal pages land,
   // the actors never do, and the only trace is a console warning. Surface it.
+  if (versionSkew.length > 0) {
+    host.notify("warn", localizeOr(host, "VAULTS.Sync.VersionSkew",
+      "{count} document(s) came from a different Foundry generation and may not render "
+      + "correctly. See the console for which pack, and which version it targets.",
+      { count: versionSkew.length }));
+    console.warn(
+      `Vaults | ${vault.label}: ${versionSkew.length} document(s) were exported for a different `
+      + `Foundry generation than this world (${game.release?.generation}). They import, but parts `
+      + `of a stale document may not place correctly — a Foundry 13 Scene keeps its walls and `
+      + `lights but draws its tiles at the canvas origin. Ask the creator for a re-export, or `
+      + `point the base at a pack built for this generation:`,
+      versionSkew,
+    );
+  }
   if (failedPages.size > 0) {
     host.notify("warn", host.localize("VAULTS.Sync.PagesFailed", { count: failedPages.size }));
     console.warn(`Vaults | ${vault.label} failed to sync ${failedPages.size} page(s); they stay in the diff and retry next sync:`,

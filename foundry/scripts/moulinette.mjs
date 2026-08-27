@@ -31,6 +31,8 @@
 // subscription, or an asset that has moved gets an unresolved reference, and
 // the caller drops the field rather than failing the sync.
 
+import * as progress from "./progress.mjs";
+
 export const MOULINETTE_PREFIX = "@moulinette/";
 
 /** The collection that fetches `/all-assets`: the reader's whole entitled index. */
@@ -58,7 +60,7 @@ async function loadIndex(log) {
   const mod = game.modules?.get("moulinette");
   if (!mod?.active) return null;
   const collection = mod.collections?.find((c) => c.getId?.() === CACHED_COLLECTION);
-  if (!collection?.initialize || !collection.selectAsset) {
+  if (!collection?.initialize || !collection.selectAsset || !collection.downloadAsset) {
     log("Moulinette is installed but its asset index is not where we expect; skipping");
     return null;
   }
@@ -78,7 +80,7 @@ async function loadIndex(log) {
     log("Moulinette's asset index is not a list; skipping");
     return null;
   }
-  return { collection, assets };
+  return { mod, collection, assets };
 }
 
 /**
@@ -89,11 +91,11 @@ async function loadIndex(log) {
  * entitlement: an entitled reader who has never opened this asset has no file
  * yet, so resolving has to be able to fetch.
  */
-async function resolveOne(ref, index, log) {
+function findAsset(ref, index, log) {
   // `find`, not `filter`: a real library is tens of thousands of assets and
-  // this runs once per distinct reference. pack_ref plus filepath identifies a
-  // single asset, so there is no second match worth collecting — the array was
-  // left over from a multi-match warning that the index rewrite removed.
+  // this runs once per distinct reference. pack_ref plus filepath names one
+  // asset, so there is no second match worth collecting — the array was left
+  // over from a multi-match warning the index rewrite removed.
   const match = index.assets.find(
     (a) => String(a?.pack_id) === ref.pack && a?.url === ref.file,
   );
@@ -101,8 +103,58 @@ async function resolveOne(ref, index, log) {
     log(`no asset ${ref.file} in pack ${ref.pack} — not subscribed, or it moved`);
     return null;
   }
+  return match;
+}
+
+/**
+ * Resolve a reference to *document data* — a Scene with its walls and lights,
+ * rather than a path to a picture of one.
+ *
+ * This cannot go through `selectAsset`, which returns `path`. For a `.json`
+ * asset that is the containing *folder*: the document itself comes back as
+ * `message`, with the `#DEP#` placeholders rewritten to wherever its
+ * dependencies just landed. Downloading those dependencies is the reason this
+ * is slow — a scene pulls its map, its tiles and its ambience with it.
+ *
+ * @returns parsed document data, or null.
+ */
+export async function resolveMoulinetteDocument(spec, warn) {
+  const log = (msg) => warn(msg);
+  const ref = parseMoulinetteRef(MOULINETTE_PREFIX + spec);
+  if (!ref) {
+    log(`malformed reference '${spec}' — expected <pack_ref>/<filepath>`);
+    return null;
+  }
+  const index = await loadIndex(log);
+  if (!index) return null;
+  const asset = findAsset(ref, index, log);
+  if (!asset) return null;
 
   try {
+    const descriptor = await index.mod.cloudclient.apiGET(`/asset/${asset.id}`, {
+      session: index.mod.getSessionId(),
+    });
+    const dl = await index.collection.downloadAsset(descriptor);
+    // A media asset returns no `message`; only the JSON forms carry one.
+    if (!dl?.message) {
+      log(`${ref.pack}/${ref.file} is not a document; foundry.base needs one`);
+      return null;
+    }
+    return JSON.parse(dl.message);
+  } catch (err) {
+    log(`could not read ${ref.pack}/${ref.file}: ${err?.message ?? err}`);
+    return null;
+  }
+}
+
+async function resolveOne(ref, index, log) {
+  const match = findAsset(ref, index, log);
+  if (!match) return null;
+
+  try {
+    // The download can take seconds and is invisible from the sync loop, which
+    // is still sitting on one page. Name it so a slow sync reads as progress.
+    progress.note(`Moulinette: ${ref.file.split("/").pop()}`);
     const path = await index.collection.selectAsset(match);
     // Scene and Scene Packer assets download as JSON and report no path.
     // They are documents, not media, and a data tree wants a file.

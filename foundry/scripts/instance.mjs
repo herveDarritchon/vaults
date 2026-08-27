@@ -10,7 +10,7 @@ import { entryId, pageId, instanceId, folderId, subdocId, folderOfPath } from ".
 import { localFileUrl } from "./media.mjs";
 import { MODULE_ID } from "./settings.mjs";
 import { BLANK_DOC_TYPES, docNameOf, parseFoundryBase } from "./foundry-base.mjs";
-import { resolveMoulinetteRefs } from "./moulinette.mjs";
+import { resolveMoulinetteDocument, resolveMoulinetteRefs } from "./moulinette.mjs";
 
 // Where the rendered article HTML lands inside each system's document, keyed
 // by (game.system.id, document name). Missing entries still create the clone;
@@ -74,7 +74,8 @@ const COLLECTION_FOR = {
  * full item data; see `resolveItemUuids`.
  *
  * @returns `null` when the page declares nothing to instantiate,
- *   `{ ok: true, action: "created" | "updated" }` on success, or
+ *   `{ ok: true, action: "created" | "updated", skew }` on success, where
+ *   `skew` names a document exported for a different Foundry generation, or
  *   `{ ok: false, reason }` when a declared base produced no document.
  *   Callers count these; every non-ok path also warns with specifics.
  */
@@ -102,8 +103,12 @@ export async function applyInstance(vault, vaultPath, meta, { forceFull = false 
   // Two reasons: the existing-document check can then happen before any
   // fromUuid, so an update still works when the template's package is gone;
   // and links.mjs has to reach the same answer statically for wikilinks.
-  const docNames = new Set(candidates.map(docNameOf));
-  const docName = candidates.length > 0 ? docNameOf(candidates[0]) : null;
+  const docNames = new Set(candidates.map(docNameOf).filter(Boolean));
+  // The first candidate that *names* a type. A Moulinette rung names none —
+  // only the reader's index knows what one of those is, and the CLI has to
+  // reach the same answer with no lookup — so the type comes from a later
+  // rung, which the CLI guarantees exists.
+  const docName = [...docNames][0] ?? null;
   if (!docName) {
     console.warn(`Vaults | foundry.base: ${vaultPath} → could not read a document type from ${JSON.stringify(fm.base)}. Skipping.`);
     return { ok: false, reason: "unparseable" };
@@ -164,6 +169,20 @@ export async function applyInstance(vault, vaultPath, meta, { forceFull = false 
     // doc already absorbed the previous data_json on its create.
     const base = tokenFloor ? deepMerge(structuredClone(tokenFloor), dataJson ?? {}) : dataJson;
     const updatePatch = base ? deepMerge(structuredClone(base), overlay) : overlay;
+    // The existing document knows its own dimensions; the patch may not
+    // mention them at all. Re-placing the note each sync also puts it back
+    // if a GM moved it, which is the same "the vault is the source of truth"
+    // rule the rest of the overlay follows.
+    if (docName === "Scene") {
+      // Geometry is read separately so the patch is not padded out with
+      // dimensions the update never meant to change.
+      await attachJournalNote(updatePatch, {
+        width: updatePatch.width ?? existing.width,
+        height: updatePatch.height ?? existing.height,
+        padding: updatePatch.padding ?? existing.padding,
+        grid: updatePatch.grid ?? { size: existing.grid?.size },
+      }, vault, vaultPath, meta);
+    }
     // A GM who drags a doc into their own folder should keep it there, so an
     // ordinary sync leaves placement alone. A force-sync is the "put it back
     // the way the vault says" button, and does move it.
@@ -191,6 +210,9 @@ export async function applyInstance(vault, vaultPath, meta, { forceFull = false 
   if (dataJson) deepMerge(baseData, dataJson);
   baseData._id = id;
   deepMerge(baseData, overlay);
+  // After the merges, so the note is placed against the geometry the scene
+  // actually ends up with rather than whatever the frontmatter happened to say.
+  if (docName === "Scene") await attachJournalNote(baseData, baseData, vault, vaultPath, meta);
   if (baseItems && baseData.items !== baseItems) {
     baseData.items = mergeItemsById(baseItems, baseData.items);
   }
@@ -227,20 +249,26 @@ export async function applyInstance(vault, vaultPath, meta, { forceFull = false 
   // Scene thumbnails: V14's Scene._preCreate already attempts this, but it
   // only fires when `canvas.ready && initialLevel.background.src` — neither
   // is reliably true mid-sync (no scene is being viewed; the cache file
-  // might still be settling). An explicit post-create pass is idempotent
-  // and means the scene's sidebar tile actually shows the map.
-  if (docName === "Scene") {
-    if (!created.thumb) {
-      try {
-        const { thumb } = await created.createThumbnail();
-        if (thumb) await created.update({ thumb });
-      } catch (err) {
-        console.warn(`Vaults | scene thumbnail generation failed for ${vaultPath}:`, err);
-      }
+  // might still be settling), and a Foundry 13 export has no level background
+  // at all because its map is a tile. An explicit post-create pass is
+  // idempotent and means the scene's sidebar tile actually shows the map.
+  //
+  // A thumb carried in by a template does not count as having one. It names a
+  // file in *that* pack's layout rather than ours, and it depicts the template
+  // rather than the scene we built from it — every `foundry.data` override is
+  // absent from it. Regenerating is cheap and always depicts what the reader
+  // actually got.
+  if (docName === "Scene" && (!created.thumb || resolved.from)) {
+    try {
+      const { thumb } = await created.createThumbnail();
+      if (thumb) await created.update({ thumb });
+      else console.warn(`Vaults | scene thumbnail came back empty for ${vaultPath}`);
+    } catch (err) {
+      console.warn(`Vaults | scene thumbnail generation failed for ${vaultPath}:`, err);
     }
   }
 
-  return { ok: true, action: "created" };
+  return { ok: true, action: "created", skew: resolved.skew ?? null };
 }
 
 
@@ -253,6 +281,20 @@ export async function applyInstance(vault, vaultPath, meta, { forceFull = false 
  * Every rejected candidate is collected and reported together: one line naming
  * what was tried and why each failed beats a warning per entry.
  */
+/**
+ * Report a document exported for a different Foundry generation, or null.
+ *
+ * Only the generation is compared. Patch and minor differences within one
+ * generation are what Foundry's own document migration exists to absorb; a
+ * generation boundary is where the schema actually moves.
+ */
+export function generationSkew(data, ref) {
+  const exported = Number.parseInt(String(data?._stats?.coreVersion ?? ""), 10);
+  const world = Number(game.release?.generation);
+  if (!Number.isFinite(exported) || !Number.isFinite(world) || exported === world) return null;
+  return { ref, exported: data._stats.coreVersion, world: game.release.generation };
+}
+
 async function resolveBase(candidates, vaultPath) {
   const tried = [];
   for (const parsed of candidates) {
@@ -265,6 +307,34 @@ async function resolveBase(candidates, vaultPath) {
         );
       }
       return { data: parsed.subtype ? { type: parsed.subtype } : {}, from: null };
+    }
+    if (parsed.kind === "moulinette") {
+      // Document data, not a path: a Moulinette Scene is a template the same
+      // way a compendium Scene is. Slow, because the download brings the
+      // scene's map, tiles and ambience with it.
+      const data = await resolveMoulinetteDocument(
+        parsed.ref,
+        (msg) => console.warn(`Vaults | moulinette: ${vaultPath}: ${msg}`),
+      );
+      if (!data) { tried.push(`@moulinette/${parsed.ref} — did not resolve`); continue; }
+      // Creators re-export for each Foundry generation, and a back catalogue
+      // can be a generation behind. Most of a stale document migrates — a v13
+      // Scene keeps its walls, lights and sounds — but not all of it: v14
+      // moved the map onto Level, and draws a v13 scene's tiles at the canvas
+      // origin instead of their stored x/y. We import anyway, because what
+      // does survive is worth more than nothing, and report it rather than
+      // leaving the reader to wonder why a map looks wrong.
+      const skew = generationSkew(data, parsed.ref);
+      delete data._id;
+      // No compendiumSource: the document came from the reader's Moulinette
+      // library, and there is no UUID in this world that names it.
+      if (tried.length > 0) {
+        console.info(
+          `Vaults | foundry.base: ${vaultPath} → using @moulinette/${parsed.ref}; `
+          + `earlier candidate(s) skipped:\n  ` + tried.join("\n  "),
+        );
+      }
+      return { data, from: `@moulinette/${parsed.ref}`, skew };
     }
     const template = await safeFromUuid(parsed.uuid);
     if (!template) { tried.push(`${parsed.uuid} — did not resolve`); continue; }
@@ -587,51 +657,55 @@ async function buildOverlay(vault, vaultPath, meta, docName, derived = {}) {
     deepMerge(overlay, cloned);
   }
 
-  // Auto-add a Map Note that links the scene back to its source journal
-  // page, tucked into the padding margin off the top-left corner so it's
-  // discoverable but doesn't collide with map content. User-supplied notes
-  // in foundry.data.notes survive — we append, not replace.
-  if (docName === "Scene") {
-    const note = await buildJournalNote(vault, vaultPath, meta);
-    if (note) overlay.notes = [...(overlay.notes ?? []), note];
-  }
   return overlay;
 }
 
 /**
- * Build a Map Note linking back to the source page's JournalEntryPage. It
- * sits in the padding margin just off the map's top-left corner: half a grid
- * cell left of the grid-aligned image origin, and half a cell below the top
- * edge, sized to a single grid square. The image origin is grid-aligned the
- * same way Foundry computes it (ceil(padding * dim / gridSize) cells), per
- * axis. Reads scene dims from the merged overlay (which already has fm.data
- * layered in) so author-overridden width/height/padding/grid flow through.
+ * Append a Map Note linking the scene back to its source journal page, into
+ * `sceneData` in place.
+ *
+ * It sits in the padding margin just off the map's top-left corner: half a
+ * grid cell left of the grid-aligned image origin, and half a cell below the
+ * top edge, sized to one grid square. The origin is grid-aligned the way
+ * Foundry computes it, `ceil(padding * dim / gridSize)` cells per axis.
+ *
+ * Geometry is read from the scene data itself, after the base template,
+ * data_json and overlay have all been merged. It used to be read from the
+ * page's frontmatter, which is only right when the page carries the whole
+ * scene in `data_json`. A Scene cloned from a compendium UUID — or resolved
+ * from a Moulinette document — gets its width, height, grid and padding from
+ * the template, and frontmatter may say nothing at all. The note was then
+ * placed against 4000x3000 at grid 100 defaults and landed somewhere
+ * arbitrary on a map of any other size.
+ *
+ * User-supplied notes survive: we append rather than replace.
  */
-async function buildJournalNote(vault, vaultPath, meta) {
-  // Scene dimensions live in the page's data_json (the extracted scene),
-  // with any inline foundry.data taking precedence. They are NOT on the
-  // overlay object the rest of buildOverlay assembles, so read them straight
-  // from the meta — otherwise every field falls back to a placeholder default
-  // and the note is mis-placed and mis-sized.
-  const fm = meta?.foundry ?? {};
-  const cfg = { ...(fm.data_json ?? {}), ...(fm.data ?? {}) };
-  const width = Number(cfg.width) || 4000;
-  const height = Number(cfg.height) || 3000;
-  const padding = Number(cfg.padding ?? 0.25);
-  const gridSize = Number(cfg.grid?.size) || 100;
-  const iconSize = gridSize;
+export function notePosition(geom) {
+  const width = Number(geom.width) || 4000;
+  const height = Number(geom.height) || 3000;
+  const padding = Number(geom.padding ?? 0.25);
+  const gridSize = Number(geom.grid?.size) || 100;
+  return {
+    x: gridSize * (Math.ceil((width / gridSize) * padding) - 0.5),
+    y: gridSize * (Math.ceil((height / gridSize) * padding) + 0.5),
+  };
+}
+
+async function attachJournalNote(sceneData, geom, vault, vaultPath, meta) {
+  const gridSize = Number(geom.grid?.size) || 100;
+  const { x, y } = notePosition(geom);
   const eId = await entryId(vault.id, vaultPath);
   const idOverride = meta?.foundry?.id;
   const pId = typeof idOverride === "string" && idOverride
     ? idOverride
     : await pageId(vault.id, vaultPath);
-  return {
+  const note = {
     _id: await subdocId(vault.id, vaultPath, "/notes/__journalLink__"),
     entryId: eId,
     pageId: pId,
-    x: gridSize * (Math.ceil((width / gridSize) * padding) - 0.5),
-    y: gridSize * (Math.ceil((height / gridSize) * padding) + 0.5),
-    iconSize,
+    x,
+    y,
+    iconSize: gridSize,
     texture: {
       src: "icons/svg/book.svg",
       anchorX: 0.5,
@@ -641,7 +715,9 @@ async function buildJournalNote(vault, vaultPath, meta) {
     },
     text: "",
   };
+  sceneData.notes = [...(sceneData.notes ?? []), note];
 }
+
 
 /**
  * Walk an arbitrary value and assign deterministic _ids to objects that

@@ -202,8 +202,8 @@ it has no place there. It belongs where asset paths already live, in the
 ```yaml
 foundry:
   base:
-    - Compendium.mad-modcaverns.mad-modcaverns-maps.Scene.DiQAiq8wUMRGevDg  # owns the module
-    - Scene                                                                 # doesn't
+    - Compendium.mad-modcaverns.mad-modcaverns-maps.Scene.DiQAiq8wUMRGevDg  # if the module is installed
+    - Scene                                                                 # blank scene if it is not
   data:
     grid: { size: 140 }
     background:
@@ -322,7 +322,117 @@ creator + pack + exact filename rather than an id.
 3. **Not doing:** cloud documents (`Scene 1`, `Actor 5`, `Item 6`, …) via
    `fromDropData`.
 
+### A changed `foundry.base` is silently ignored
+
+Found while testing the Moulinette document rung: repointing a page's `base` at
+a different scene did nothing, and neither a normal sync nor a Force Sync said
+so. The document had to be deleted by hand before the new base took effect.
+
+`applyInstance` branches on whether the document exists, and only the create
+path consults `base`. That is deliberate — re-cloning would discard walls,
+tokens and lighting a GM had added, and it would happen the moment they
+installed a module that outranked the current rung. But the line is in an
+inconsistent place: `forceFull` already reasserts vault authority over folder
+placement (`if (!forceFull) delete updatePatch.folder`), so it reasserts where
+a document lives but not what it is.
+
+Two smaller edges stack on top, both hit in the same session:
+
+- Deleting a document does not make an incremental sync rebuild it — the page
+  hash is unchanged, so it never re-enters the upsert set. This one at least
+  warns, through `findMissingDocuments`.
+- Nothing records what a document was built *from*. `flags.vaults` carries
+  `vaultId` and `path`; `resolveBase` computes a `from` (a compendium UUID, or
+  `@moulinette/…`) and discards it.
+
+Proposed:
+
+1. Stamp the authored spec list as `flags.vaults.baseSpec` on create. A string
+   compare, deliberately not a comparison of *resolved* sources — that would
+   mean re-running `resolveBase` every sync, and for a Moulinette rung that is
+   a scene download to learn that nothing changed.
+2. On a normal sync, warn when the recorded spec differs from the current one.
+3. On Force Sync, rebuild, behind a confirm naming what is lost.
+
+Still not re-clone on a newly-installed higher-priority package: the vault
+author asked for nothing, so nothing should change under the GM.
+
 ### Open questions
+
+- **A vault targets one Foundry generation.** Not built, and not needed while
+  v14 is the only target, but the decision is made: supporting several means
+  deploying a separate copy of the vault per generation, not branching inside
+  pages.
+
+  This separates two things the Moulinette work conflated. A `foundry.base`
+  priority list is for **content availability** — does this reader own that
+  pack, is that module installed. We ended up also using it for **version
+  compatibility**, and those are independent axes: every rung became a guess
+  about two variables at once, and the combinations multiply past what anyone
+  could test or a reader could reason about.
+
+  Declared instead, probably as a `foundry_version` setting, it gives one
+  honest answer up front rather than a scattered map to puzzle over. The
+  generation-skew warning already built then has a better question to ask —
+  "does this pack match what the vault was built for" rather than "does it
+  match this world" — and priority lists go back to meaning one thing.
+
+  It also matches how the content is actually published: creators re-export
+  per generation as a new pack, so a vault built against their v14 catalogue
+  is a different vault from one built against their v13 catalogue, and
+  pretending otherwise is what makes a single page try to serve both.
+
+- **Composing a scene from Moulinette *assets* is the stronger pattern, not
+  the fallback.** The two rungs age differently. A document inherits the
+  creator's walls, lights and ambience but is coupled to a Foundry generation,
+  and it ages on their release schedule rather than the vault's. An asset is a
+  `.webp`, and a `.webp` does not have a schema.
+
+  The licensing split also lands where it should. A vault cannot redistribute
+  MAD's art, but wall geometry, lighting and levels are the author's own work
+  and ship freely in `data_json`. So the vault carries the structure it owns
+  and the reader's library supplies the licensed pixels:
+
+  ```yaml
+  foundry:
+    base: Scene
+    data_json: Scenes/tavern.json      # dimensions, grid, walls, lights, levels
+  ```
+  ```json
+  { "levels": [ { "background": { "src": "@moulinette/11938/images/maps/...webp" } } ] }
+  ```
+
+  That is the same relationship the rest of vaults already has with Foundry:
+  the vault is authoritative for what it wrote, and defers for what it does
+  not own. Worth saying so in the docs, because the obvious reading of a
+  priority list is that the document rung is the good one and the asset rung
+  is what you settle for.
+
+- **A creator's back catalogue may be a Foundry version behind.** Verified: The
+  MAD Cartographer's newer packs export native v14 (`13752` Dark Heart of the
+  Wood is core 14.364 with 4 levels), while everything below roughly `13000` is
+  core 13.344. A v13 Scene *creates* cleanly in v14 — all 153 walls, 17 lights,
+  10 tiles and 10 sounds survive, and the tile coordinates in the document are
+  correct — but it does not *render* correctly: v14 draws those tiles at the
+  canvas origin instead of at their stored x/y.
+
+  Migrating scene data across Foundry versions is Foundry's job, not ours, so
+  the honest scope is: a `@moulinette/` document rung is reliable only for a
+  pack the creator has re-exported for the reader's Foundry version.
+
+- **Prefer a compendium rung above a Moulinette document rung.** Not only for
+  fidelity, which was the earlier reasoning, but because Foundry migrates
+  compendium packs on load and raw JSON pulled from Moulinette skips that step
+  entirely. A creator who ships both ways (MAD's scenes name
+  `Compendium.mad-taverns.mad-taverns-maps.Scene.…` in their own
+  `compendiumSource`) is better addressed through their module:
+
+  ```yaml
+  base:
+    - Compendium.mad-taverns.mad-taverns-maps.Scene.F3wyDaiec72h5sFG  # migrates
+    - "@moulinette/13752/json/scene/....json"                          # does not
+    - Scene
+  ```
 
 - **Re-releases fragment a pack across `pack_ref`s.** Verified against a live
   library: The MAD Cartographer alone has 204 packs there, and the same name
@@ -337,6 +447,11 @@ creator + pack + exact filename rather than an id.
   degrades correctly (no background, rather than a broken path) but it does
   degrade, and there is no more stable handle on offer short of a supported
   `resolveAsset` from the Moulinette developers.
+
+  This turned out to cut the other way too. Those pairs are largely *version*
+  re-exports, so pinning a `pack_ref` also pins a Foundry version — which for
+  documents is the difference between a scene that renders and one that does
+  not. Naming the pack is the feature, not the tax.
 
 - **Resolved paths carry a pack version** — a download lands in
   `moulinette-v2/cloud/<creator>/<pack>-12.5.1/...`. Harmless because we
