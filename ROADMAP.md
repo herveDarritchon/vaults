@@ -193,22 +193,28 @@ the type needs a world collection to be created in.
 
 ### Moulinette: research
 
-Creators often distribute through both channels, so Moulinette is not an
-alternative to compendium UUIDs, it is another rung on the same ladder:
+Creators often distribute through both channels. The first sketch made
+Moulinette another rung on the `foundry.base` ladder; that was wrong. `base`
+names a *document template* to clone, and a Moulinette Map is an **image**, so
+it has no place there. It belongs where asset paths already live, in the
+`foundry.data` overlay, next to `@vault/`:
 
 ```yaml
 foundry:
   base:
     - Compendium.mad-modcaverns.mad-modcaverns-maps.Scene.DiQAiq8wUMRGevDg  # owns the module
-    - "@moulinette/map/The MAD Cartographer/Modular Caverns/cavern_01.webp"  # via Moulinette
-    - Scene                                                                  # neither
+    - Scene                                                                 # doesn't
   data:
-    grid: { size: 140 }        # the overlay applies at every rung
+    grid: { size: 140 }
+    background:
+      src: "@moulinette/10698/scenes/modular-cavern-01.webp"   # if subscribed
 ```
 
-Note the ladder degrades in **fidelity**, not just availability: a compendium
-Scene clone brings walls, lighting and sounds; a Moulinette `Map` is an
-image, so you get a background and whatever `foundry.data` supplies.
+The two mechanisms compose rather than compete, and they degrade differently.
+`base` degrades in **fidelity**: a compendium Scene clone brings walls,
+lighting and sounds, a blank `Scene` brings none. A `@moulinette/` path
+degrades by **dropping its container**, so an unsubscribed reader gets a scene
+with no background rather than one pointing at a file that isn't there.
 
 **Asset types** (numeric enum in the module bundle):
 
@@ -219,9 +225,34 @@ image, so you get a background and whatever `foundry.data` supplies.
 
 **Supported vs internal.** `game.modules.get("moulinette").api` has exactly
 two methods, `searchUI()` and `searchAssets(terms, type)`, and searchAssets
-accepts only Image (3), Audio (7) and Map (2). It searches `mou-cloud-cached`,
-`mou-local`, `mou-gameicons` and `mou-bbc-sounds` — **only what the user can
-actually access**, which is entitlement-awareness for free.
+accepts only Image (3), Audio (7) and Map (2).
+
+We do not use it. It is a *search*, and it is unfit for resolving a reference
+three ways over: it matches `asset.name`, which for a file with no explicit
+name is `prettyMediaName(filepath)` (hyphens and underscores to spaces, title
+case, extension in parentheses), so `cavern_01.webp` indexes as "Cavern 01
+(webp)" and never matches its own filename; it reads only page 0 of
+`PAGE_SIZE = 100`; and it ranks by relevance, so two readers could resolve one
+reference to different assets.
+
+What we use instead is the index those searches run over. `POST /all-assets`
+returns every asset the reader can access, `{ assets, packs }` keyed by
+`pack_ref`, and the `mou-cloud-cached` collection loads it once into
+`cache.allAssets`. Reading it is entitlement-awareness for free, same as
+search, but exact and complete. Each cached asset keeps `pack_id`
+(the `pack_ref`) and `url` (the filepath), which is the pair we match on.
+
+`collection.selectAsset(asset)` is the correct download entry point: it fetches
+the `/asset/<id>` descriptor and then downloads, returning the local path.
+Calling `downloadAsset` directly with a browser asset throws `Invalid
+BaseURL?`, because it wants the descriptor's `base_url` / `file_url` / `deps`.
+
+**Verified in a live world** against a 61,819-asset library: `pack_id` is the
+marketplace product id (`/marketplace/product/10612/...` is pack 10612, The
+MAD Cartographer's Badlands Map Pack), the index carries `url` as the
+filepath, and a reference resolves through to a real downloaded file. The
+prettified-name problem is visible in the raw data too — `steam-1.webm`
+indexes as "Steam 1 (webm)".
 
 Everything that imports a *document* is internal, reached through the module
 object but with no contract:
@@ -264,19 +295,58 @@ creator + pack + exact filename rather than an id.
    old Actor/Item-only restriction rested on a reason that was not true of the
    code (the description embed is already optional), and it was skipping every
    compendium Scene.
-2. **`@moulinette/<type>/<creator>/<pack>/<file>` as a priority-list rung**,
-   resolved through `api.searchAssets` with an exact creator + pack +
-   filename match, falling through on no match. Covers Map, Image, Audio.
-   One internal dependency remains — `downloadAsset`, because the local
-   `moulinette-v2/cloud/...` path is a download cache, not an entitlement
-   marker, so an entitled user who has not downloaded yet has no local file.
+2. ~~**`@moulinette/<pack_ref>/<filepath>` as an asset reference.**~~ Done, in
+   `foundry/scripts/moulinette.mjs`. Not a `foundry.base` rung after all: a
+   Moulinette Map is an *image*, and `base` names a document template, so it
+   belongs alongside `@vault/` in the `foundry.data` tree rewrite instead.
+
+   Resolved against `/all-assets` — the reader's whole entitled index, which
+   the cached cloud collection already loads — matching exactly on `pack_ref`
+   and filepath. `pack_ref` is the number in a marketplace URL
+   (`/marketplace/product/10698/czepeku-scenes/abandoned-mine-entrance`); the
+   two slugs after it are display names run through `.slugify()`, so they move
+   when a creator renames a pack and are not safe to key on.
+
+   The first attempt went through the public `api.searchAssets` and was wrong
+   three ways, all of which a live world would have hit at once: the index
+   matches a *prettified* display name, so `cavern_01.webp` (indexed as
+   "Cavern 01 (webp)") never matched its own filename; only page 0 of 100 is
+   ever read; and `downloadAsset` wants the `/asset/<id>` descriptor, not the
+   browser asset, so it threw `Invalid BaseURL?` regardless. Indexing rather
+   than searching removes all three, and drops the Map/Image/Audio limit,
+   which was only a restriction of that public wrapper.
+
+   Two internal dependencies remain: `collections` and `cache.allAssets`. Both
+   are probed rather than assumed, and a miss degrades to an unresolved
+   reference plus one warning.
 3. **Not doing:** cloud documents (`Scene 1`, `Actor 5`, `Item 6`, …) via
    `fromDropData`.
 
 ### Open questions
 
-- **Id stability.** Unknown whether a Moulinette asset id survives a
-  catalogue reindex. Matching by name sidesteps it, but it is worth asking.
+- **Re-releases fragment a pack across `pack_ref`s.** Verified against a live
+  library: The MAD Cartographer alone has 204 packs there, and the same name
+  recurs under different refs with different contents ("Badlands Map Pack" at
+  10612 and 11951, "Modular Caverns" at 2050, 8507 and 11973). This is the
+  strongest argument for keying on `pack_ref`: matching on creator + pack
+  *name*, as the first draft did, is genuinely ambiguous between two packs a
+  reader may both own.
+
+  The cost is that a reference pins to one release. A reader who owns only the
+  newer ref will not resolve a reference written against the older one. It
+  degrades correctly (no background, rather than a broken path) but it does
+  degrade, and there is no more stable handle on offer short of a supported
+  `resolveAsset` from the Moulinette developers.
+
+- **Resolved paths carry a pack version** — a download lands in
+  `moulinette-v2/cloud/<creator>/<pack>-12.5.1/...`. Harmless because we
+  resolve at sync time rather than storing paths in the vault, so a new
+  version heals on the next sync. It would matter if we ever cached the
+  resolution.
+
+- **Moulinette itself is on borrowed time against Foundry v15.** Its
+  `file-manager.ts` reaches for the global `FilePicker`, deprecated in v13 and
+  slated for removal in v15. Not ours to fix, but it dates this integration.
 - **Talk to the Moulinette developers.** The API we need is one method away
   from being supported; a documented `resolveAsset(creator, pack, file)` would
   remove the last internal dependency. Worth asking rather than reverse

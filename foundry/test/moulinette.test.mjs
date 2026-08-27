@@ -1,0 +1,235 @@
+// @moulinette/... reference parsing and resolution.
+//
+// The resolver reads Moulinette's cached asset index, so the tests stub the
+// three things it touches: the module's `collections` entry, the `cache`
+// the collection's `initialize()` fills, and `selectAsset`. That covers the
+// parts that decide behaviour — which assets count as a match, and what
+// happens to a reference that resolves to nothing — without a live entitled
+// Foundry.
+//
+// The stub mirrors the real shapes deliberately: assets carry `pack_id` (the
+// pack_ref) and `url` (the filepath), and `selectAsset` returns a path string
+// rather than an object. An earlier version of this resolver searched instead
+// of indexing, and stubs that guessed the shapes hid three bugs that a live
+// world would have hit immediately.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+import { parseMoulinetteRef, resolveMoulinetteRefs } from "../scripts/moulinette.mjs";
+
+test("parses a reference into pack_ref and filepath", () => {
+  assert.deepEqual(parseMoulinetteRef("@moulinette/10698/scenes/abandoned-mine-entrance.webp"), {
+    pack: "10698", file: "scenes/abandoned-mine-entrance.webp",
+  });
+});
+
+test("keeps slashes inside the file segment, since packs nest folders", () => {
+  const ref = parseMoulinetteRef("@moulinette/442/SFX/Basic/Water Fountain (Loop).ogg");
+  assert.equal(ref?.pack, "442");
+  assert.equal(ref?.file, "SFX/Basic/Water Fountain (Loop).ogg");
+});
+
+test("rejects what it cannot act on", () => {
+  assert.equal(parseMoulinetteRef("@vault/attachments/x.webp"), null, "a different prefix");
+  assert.equal(parseMoulinetteRef("@moulinette/10698"), null, "no file segment");
+  assert.equal(parseMoulinetteRef("@moulinette/"), null, "nothing at all");
+  assert.equal(parseMoulinetteRef(null), null);
+});
+
+/** Stub the module surface the resolver reaches for. */
+async function withMoulinette(assets, fn, {
+  active = true,
+  select = async (a) => "local/" + a.url,
+  collections,
+} = {}) {
+  const prev = globalThis.game;
+  const cache = { allAssets: null };
+  globalThis.game = {
+    modules: {
+      get: (id) => (id !== "moulinette" ? undefined : {
+        active,
+        cache,
+        collections: collections ?? [{
+          getId: () => "mou-cloud-cached",
+          initialize: async () => { cache.allAssets = assets; },
+          selectAsset: select,
+        }],
+      }),
+    },
+  };
+  // Must await: restoring synchronously pulls `game` out from under the
+  // resolver's first suspension.
+  try { return await fn(); } finally { globalThis.game = prev; }
+}
+
+/** Shapes match the real index: pack_id is the pack_ref, url is the filepath. */
+const GHELFI = { pack_id: 442, url: "Tavern (Loop).ogg", id: 42 };
+const REF = "@moulinette/442/Tavern (Loop).ogg";
+
+test("resolves a reference to a local path", async () => {
+  await withMoulinette([GHELFI], async () => {
+    const doc = { sounds: [{ name: "Ambience", path: REF }] };
+    const stats = await resolveMoulinetteRefs(doc, () => {});
+    assert.equal(doc.sounds[0].path, "local/Tavern (Loop).ogg");
+    assert.deepEqual(stats, { resolved: 1, unresolved: 0 });
+  });
+});
+
+test("matches on pack_ref and filepath, not on a name that merely looks close", async () => {
+  // The filename never appears in the indexed display name — Moulinette
+  // prettifies `cavern_01.webp` into "Cavern 01 (webp)" — which is exactly
+  // why this matches on the filepath instead.
+  const other = { pack_id: 442, url: "Tavern (Oneshot).ogg", id: 43 };
+  const wrongPack = { pack_id: 999, url: "Tavern (Loop).ogg", id: 44 };
+  await withMoulinette([other, wrongPack, GHELFI], async () => {
+    const doc = { path: REF };
+    await resolveMoulinetteRefs(doc, () => {});
+    assert.equal(doc.path, "local/Tavern (Loop).ogg");
+  });
+});
+
+test("a pack_ref that differs only by type still matches", async () => {
+  // The index carries pack_id as a number, the reference is text.
+  await withMoulinette([{ pack_id: "442", url: "Tavern (Loop).ogg", id: 42 }], async () => {
+    const doc = { path: REF };
+    await resolveMoulinetteRefs(doc, () => {});
+    assert.equal(doc.path, "local/Tavern (Loop).ogg");
+  });
+});
+
+test("an unresolved reference takes its container, one level up", async () => {
+  await withMoulinette([], async () => {
+    const doc = {
+      name: "Tavern",
+      background: { src: REF },
+      sounds: [{ name: "Ambience", path: REF }, { name: "Kept", path: "local/x.ogg" }],
+    };
+    const stats = await resolveMoulinetteRefs(doc, () => {});
+    assert.equal(doc.background, undefined, "a background with no src is dropped");
+    assert.deepEqual(doc.sounds.map((s) => s.name), ["Kept"], "the pathless sound is dropped");
+    assert.equal(doc.name, "Tavern", "but the document itself survives");
+    assert.equal(stats.unresolved, 1);
+  });
+});
+
+test("a Scene or Scene Packer asset resolves to no path and is treated as unresolved", async () => {
+  // Those download as JSON and report an empty path. A data tree wants a file.
+  await withMoulinette([GHELFI], async () => {
+    const warnings = [];
+    const doc = { path: REF };
+    await resolveMoulinetteRefs(doc, (m) => warnings.push(m));
+    assert.equal(doc.path, undefined);
+    assert.match(warnings.join("\n"), /not a media asset/);
+  }, { select: async () => "" });
+});
+
+test("a missing or inactive module leaves the reference unresolved, not thrown", async () => {
+  await withMoulinette([GHELFI], async () => {
+    const doc = { path: REF };
+    const stats = await resolveMoulinetteRefs(doc, () => {});
+    assert.equal(doc.path, undefined);
+    assert.equal(stats.unresolved, 1);
+  }, { active: false });
+});
+
+test("an index that is not a list is skipped, not thrown on", async () => {
+  // cache.allAssets carries no contract. `?? []` covers an absent index but
+  // not a changed one, and a non-array reaching .find() would throw — the one
+  // thing this module promises never to do to a sync.
+  const prev = globalThis.game;
+  globalThis.game = {
+    modules: {
+      get: () => ({
+        active: true,
+        cache: { allAssets: { 0: GHELFI, length: 1 } },   // array-like, not an array
+        collections: [{
+          getId: () => "mou-cloud-cached",
+          initialize: async () => {},
+          selectAsset: async () => "local/x",
+          downloadAsset: async () => ({ status: "success" }),
+        }],
+      }),
+    },
+  };
+  try {
+    const warnings = [];
+    const doc = { path: REF };
+    const stats = await resolveMoulinetteRefs(doc, (m) => warnings.push(m));
+    assert.equal(doc.path, undefined);
+    assert.equal(stats.unresolved, 1);
+    assert.match(warnings.join("\n"), /not a list/);
+  } finally { globalThis.game = prev; }
+});
+
+test("a module whose internals moved warns once and resolves nothing", async () => {
+  await withMoulinette([GHELFI], async () => {
+    const warnings = [];
+    const doc = { a: REF, b: REF };
+    await resolveMoulinetteRefs(doc, (m) => warnings.push(m));
+    assert.equal(warnings.length, 1, "one warning, not one per reference");
+    assert.match(warnings[0], /not where we expect/);
+  }, { collections: [{ getId: () => "mou-local" }] });
+});
+
+test("a failed download is reported, not thrown", async () => {
+  await withMoulinette([GHELFI], async () => {
+    const warnings = [];
+    const doc = { path: REF };
+    await resolveMoulinetteRefs(doc, (m) => warnings.push(m));
+    assert.equal(doc.path, undefined);
+    assert.match(warnings.join("\n"), /download failed/);
+  }, { select: async () => { throw new Error("offline"); } });
+});
+
+test("loads the index once and resolves each distinct reference once", async () => {
+  let initialized = 0, selected = 0;
+  const cache = { allAssets: null };
+  const prev = globalThis.game;
+  globalThis.game = {
+    modules: {
+      get: () => ({
+        active: true,
+        cache,
+        collections: [{
+          getId: () => "mou-cloud-cached",
+          initialize: async () => { initialized++; cache.allAssets = [GHELFI]; },
+          selectAsset: async (a) => { selected++; return "local/" + a.url; },
+        }],
+      }),
+    },
+  };
+  try {
+    const doc = { a: REF, b: REF, nested: { c: REF } };
+    const stats = await resolveMoulinetteRefs(doc, () => {});
+    assert.equal(initialized, 1, "index loaded once");
+    assert.equal(selected, 1, "one download for three identical references");
+    // Counts distinct assets, not occurrences: the number that matters for a
+    // sync summary is how much the reader actually got.
+    assert.equal(stats.resolved, 1);
+    assert.equal(doc.nested.c, "local/Tavern (Loop).ogg");
+  } finally { globalThis.game = prev; }
+});
+
+test("a vault with no references never touches Moulinette", async () => {
+  let touched = false;
+  const prev = globalThis.game;
+  globalThis.game = { modules: { get: () => { touched = true; return undefined; } } };
+  try {
+    const doc = { img: "@vault/attachments/map.webp", name: "Keep" };
+    const stats = await resolveMoulinetteRefs(doc, () => {});
+    assert.equal(touched, false, "the index is loaded lazily");
+    assert.equal(doc.img, "@vault/attachments/map.webp", "@vault/ is left for its own rewriter");
+    assert.deepEqual(stats, { resolved: 0, unresolved: 0 });
+  } finally { globalThis.game = prev; }
+});
+
+test("warns once about a malformed reference repeated across a document", async () => {
+  await withMoulinette([GHELFI], async () => {
+    const warnings = [];
+    const doc = { a: "@moulinette/10698", b: "@moulinette/10698" };
+    await resolveMoulinetteRefs(doc, (m) => warnings.push(m));
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /expected @moulinette/);
+  });
+});
