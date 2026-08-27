@@ -2,7 +2,7 @@
   "id": "vaults",
   "title": "Wizzlethorpe Vaults",
   "description": "Sync Obsidian vaults published with Wizzlethorpe Vaults into Foundry VTT as journal entries. Manifest-based incremental sync with role-based auth, multi-vault support, and a local image cache.",
-  "version": "0.13.5",
+  "version": "0.14.0",
   "compatibility": {
     "minimum": "14",
     "verified": "14"
