@@ -11,6 +11,8 @@ import {
   copyReferencedImages,
   copyReferencedPassthroughs,
 } from "./asset-refs.js";
+import { downloadFilePaths } from "./render/handlers/builtin/download.js";
+import { foundryManifestPaths, manifestDownloadPath } from "./render/handlers/builtin/foundry-manifest.js";
 import { buildManifest, type BodyMeta } from "./manifest.js";
 import { collectBodyMeta, warnFoundryDocCollisions } from "./foundry-meta.js";
 import { compressImage } from "./images.js";
@@ -31,6 +33,7 @@ import { DEFAULT_CSS, renderThemeOverride } from "./render/styles.js";
 import { loadObsidianSnippets } from "./obsidian.js";
 import { loadSettings, writeSettings, SETTINGS_FILE, type Settings } from "./settings.js";
 import { loadConfig } from "./config.js";
+import { applyFrontmatterDefaults, compileFrontmatterRules } from "./frontmatter-defaults.js";
 import matter from "gray-matter";
 import { renderAuthMiddleware, renderLoginPage } from "./render/auth-template.js";
 import { renderFooterHtml } from "./render/footer.js";
@@ -277,10 +280,45 @@ export async function buildSite(input: BuildOptions): Promise<BuildResult> {
   // the passthrough pool (still reference-gated). The user-facing
   // warning lists exactly which paths got dropped so unintentional
   // omissions surface immediately.
+  // Read the ```download blocks first: a file named by one is shipped whatever
+  // its extension, so it must not also be reported as skipped. Warning about a
+  // file that then gets staged sends the reader off to set
+  // include_unknown_files for no reason.
+  const downloadPaths = new Set<string>();
+  const manifestPaths = new Set<string>();
+  const manifestDownloads = new Map<string, string>();
+  for (const f of markdownFiles) {
+    const source = await readFile(f.absolute, "utf8");
+    for (const path of downloadFilePaths(source)) downloadPaths.add(path);
+    for (const path of foundryManifestPaths(source)) manifestPaths.add(path);
+  }
+  // A foundry-manifest block names only the manifest. The zip is whatever the
+  // manifest's own download field says, so read it and ship that too — the
+  // author should not have to repeat a path the manifest already states, and
+  // an install needs both halves present or it fails on the second fetch.
+  for (const rel of manifestPaths) {
+    downloadPaths.add(rel);
+    const file = withinLimit.find((f) => f.path === rel);
+    if (!file) continue;
+    const { path, absolute } = manifestDownloadPath(await readFile(file.absolute, "utf8"));
+    if (absolute) {
+      console.warn(
+        `  ${rel}: "download" is an absolute URL (${absolute}). Make it relative`
+        + ` (e.g. "/downloads/module.zip") so it resolves on whichever host serves this`
+        + ` vault — an absolute one cannot be signed for a gated install, and the`
+        + ` install fails fetching the file.`,
+      );
+    }
+    if (path) {
+      downloadPaths.add(path);
+      manifestDownloads.set(rel, path);
+    }
+  }
   const unknownFiles = withinLimit.filter((f) =>
     !/\.md$|\.base$/i.test(f.path)
     && !IMAGE_EXT_RE.test(f.path)
-    && !PASSTHROUGH_EXT_RE.test(f.path),
+    && !PASSTHROUGH_EXT_RE.test(f.path)
+    && !downloadPaths.has(f.path),
   );
   const includeUnknown = settings.values.include_unknown_files;
   if (unknownFiles.length > 0) {
@@ -299,7 +337,27 @@ export async function buildSite(input: BuildOptions): Promise<BuildResult> {
   // Effective passthrough list: recognised media plus (optionally) unknowns.
   const stagedPassthroughs = includeUnknown
     ? [...passthroughFiles, ...unknownFiles]
-    : passthroughFiles;
+    : [...passthroughFiles];
+
+  // Files named by a ```download block join the pool whatever their
+  // extension. A download is usually a .zip or a module.json, which the
+  // passthrough list calls unknown and drops — but naming one in a block is
+  // the author asking for it by name, which is exactly the intent
+  // include_unknown_files exists to require. Role gating is untouched: these
+  // are still reference-gated, so a download on a patron page reaches the
+  // patron variant and no other.
+  if (downloadPaths.size > 0) {
+    const already = new Set(stagedPassthroughs.map((f) => f.path));
+    const promoted = withinLimit.filter((f) => downloadPaths.has(f.path) && !already.has(f.path));
+    const missing = [...downloadPaths].filter((p) => !withinLimit.some((f) => f.path === p));
+    for (const p of missing) {
+      console.warn(`  download block names '${p}', which is not in the vault; the link will 404.`);
+    }
+    if (promoted.length > 0) {
+      console.log(`  staging ${promoted.length} file(s) named by download / foundry-manifest blocks`);
+      stagedPassthroughs.push(...promoted);
+    }
+  }
 
   // ── Shared content (read once, reused across roles) ─────────────────────
   const sources = new Map<string, string>();
@@ -320,9 +378,17 @@ export async function buildSite(input: BuildOptions): Promise<BuildResult> {
   // normalized for Obsidian quirks first; malformed YAML throws inside
   // parsePageFrontmatter and aborts the build rather than silently dropping a
   // page's metadata (and, with it, its role gate).
+  const frontmatterRules = compileFrontmatterRules(settings.values.default_frontmatter);
   const parsedSources = new Map<string, PreParsedFrontmatter>();
   for (const f of markdownFiles) {
-    parsedSources.set(f.path, parsePageFrontmatter(sources.get(f.path)!, f.path));
+    const parsed = parsePageFrontmatter(sources.get(f.path)!, f.path);
+    // Applied here, at the one place a page's frontmatter is read, so that
+    // roles, the rendered wiki, the manifest the Foundry client syncs from and
+    // the module compiler all see the same page. A default that only some of
+    // them honoured would be a way for a synced vault and an installed module
+    // to disagree about the same file.
+    applyFrontmatterDefaults(f.path, parsed.data, frontmatterRules);
+    parsedSources.set(f.path, parsed);
   }
 
   // Derive role/title/aliases per page from that parse. A role that's present
@@ -555,6 +621,7 @@ export async function buildSite(input: BuildOptions): Promise<BuildResult> {
       parsedSources,
       baseSources,
       imageIndex,
+      manifestDownloads,
       imageStagingDir,
       passthroughIndex,
       passthroughStagingDir: otherStagingDir,
@@ -729,6 +796,8 @@ interface VariantArgs {
   /** slugified basename → raw YAML for standalone `.base` files. */
   baseSources: Map<string, string>;
   imageIndex: Map<string, ImageEntry>;
+  /** Manifest path -> the file its own download field names; see copyReferencedPassthroughs. */
+  manifestDownloads: ReadonlyMap<string, string>;
   /** Staging dir holding compressed images; we copy what's referenced. */
   imageStagingDir: string;
   /** Passthrough media (audio/video/pdf/epub) staged once, reference-copied per variant. */
@@ -968,7 +1037,7 @@ async function buildVariant(a: VariantArgs): Promise<VariantStats> {
   // contract as images: ship only into variants whose visible pages
   // reference the file. A DM-only audio cue can't ride along into the
   // public deploy because no public-tier source mentions it.
-  await copyReferencedPassthroughs(visibleSources, visibleMetas, a.passthroughIndex, a.passthroughStagingDir, a.variantDir);
+  await copyReferencedPassthroughs(visibleSources, visibleMetas, a.passthroughIndex, a.passthroughStagingDir, a.variantDir, a.manifestDownloads);
 
   return {
     pageCount: visibleMetas.length,

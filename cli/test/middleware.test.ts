@@ -195,6 +195,249 @@ describe("generated auth middleware", () => {
     });
     assert.equal(res.headers.get("Location"), "/");
   });
+
+  // /_link — short-lived, self-authenticating URLs -------------------------
+  //
+  // Foundry's module installer runs on the Foundry server, not the browser, so
+  // it never carries the session cookie. /_link moves the caller's existing
+  // authority into a URL and puts a short clock on it. It grants nothing they
+  // could not already fetch; what is worth testing is that it refuses
+  // anonymous callers, cannot be talked into signing a link pointing somewhere
+  // else, and hands back something that actually works.
+
+  // /_batch variant selection ---------------------------------------------
+  //
+  // A page carries its own role, and the sync client gives a page below the DM
+  // tier player-readable ownership. Filling such a page with the DM's
+  // rendering put DM content in front of players — a base view filtered by
+  // role renders three creatures for the DM and one for everyone else, on the
+  // same page. So a caller asks for the variant matching each page's role.
+
+  it("serves the caller's own variant when none is asked for", async () => {
+    // The batch handler passes ASSETS a URL string rather than a Request.
+    const res = await call(mw, "https://v.example/_batch", {
+      method: "POST", headers: { Cookie: dmCookie }, body: "a.body.html",
+    },
+      { ASSETS: { fetch: (r: Request | string) =>
+          new Response(new URL(typeof r === "string" ? r : r.url).pathname) } },
+    );
+    const body = await res.json() as { files: Record<string, string> };
+    assert.equal(body.files["a.body.html"], "/_variants/dm/a.body.html");
+  });
+
+  it("serves a lower variant when asked, which is the whole fix", async () => {
+    const res = await call(mw, "https://v.example/_batch?role=public", {
+      method: "POST", headers: { Cookie: dmCookie }, body: "a.body.html",
+    },
+      { ASSETS: { fetch: (r: Request | string) =>
+          new Response(new URL(typeof r === "string" ? r : r.url).pathname) } },
+    );
+    const body = await res.json() as { files: Record<string, string> };
+    assert.equal(body.files["a.body.html"], "/_variants/public/a.body.html");
+  });
+
+  it("refuses a variant above the caller's tier", async () => {
+    // The direction that matters: asking down is content you can already read,
+    // asking up is the whole role gate.
+    const res = await call(mw, "https://v.example/_batch?role=dm", {
+      method: "POST", body: "a.body.html",
+    });
+    assert.equal(res.status, 403, "anonymous must not reach the dm variant");
+  });
+
+  it("refuses a variant that is not a role at all", async () => {
+    const res = await call(mw, "https://v.example/_batch?role=../dm", {
+      method: "POST", headers: { Cookie: dmCookie }, body: "a.body.html",
+    });
+    assert.equal(res.status, 403);
+  });
+
+  it("refuses to mint a link for an anonymous caller", async () => {
+    const res = await call(mw, "https://v.example/_link?path=/releases/module.json");
+    assert.equal(res.status, 401);
+  });
+
+  it("mints a working link carrying the caller's own role", async () => {
+    const res = await call(mw, "https://v.example/_link?path=/releases/module.json", {
+      headers: { Cookie: dmCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as { url: string; role: string; expiresInMinutes: number };
+    assert.equal(body.role, "dm");
+    assert.equal(body.expiresInMinutes, 10);
+
+    // The point of the endpoint: that URL authenticates on its own, with no
+    // cookie, and lands in the caller's variant rather than the public one.
+    const followed = await call(mw, body.url);
+    assert.equal(await followed.text(), "/_variants/dm/releases/module.json");
+  });
+
+  it("will not sign a link pointing at another origin", async () => {
+    // Otherwise this is an open redirect with our signature on it.
+    const res = await call(mw, "https://v.example/_link?path=https://evil.example/x", {
+      headers: { Cookie: dmCookie },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("will not sign a protocol-relative path either", async () => {
+    const res = await call(mw, "https://v.example/_link?path=//evil.example/x", {
+      headers: { Cookie: dmCookie },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("needs a path", async () => {
+    const res = await call(mw, "https://v.example/_link", { headers: { Cookie: dmCookie } });
+    assert.equal(res.status, 400);
+  });
+
+  it("will not mint a link token from a link token", async () => {
+    // Otherwise the ten-minute window is not a limit: one leaked install URL
+    // calls /_link to obtain the next, and renews itself forever. That window
+    // is the entire reason link tokens are honoured on navigation at all.
+    const link = await forgeToken("l", "dm", 600);
+    const res = await call(mw, "https://v.example/_link?path=/a.zip&_token=" + link);
+    assert.equal(res.status, 401);
+  });
+
+  it("still mints from a session cookie", async () => {
+    const res = await call(mw, "https://v.example/_link?path=/a.zip", {
+      headers: { Cookie: dmCookie },
+    });
+    assert.equal(res.status, 200);
+  });
+
+  it("still mints from a bearer, which is not renewable in the same way", async () => {
+    // A bearer is already a 90-day credential deliberately issued through
+    // /connect; minting a shorter-lived link from one grants nothing new.
+    const bearer = await forgeToken("b", "dm", 3600);
+    const res = await call(mw, "https://v.example/_link?path=/a.zip", {
+      headers: { Authorization: "Bearer " + bearer },
+    });
+    assert.equal(res.status, 200);
+  });
+
+  it("keeps a 90-day bearer out of top-level navigation", async () => {
+    // The rule a link token is deliberately exempt from. A bearer in a URL is
+    // a shareable 90-day credential; it must not quietly browse the site.
+    const bearer = await forgeToken("b", "dm", 3600);
+    const res = await call(mw, "https://v.example/secret?_token=" + bearer);
+    assert.equal(await res.text(), "/_variants/public/secret");
+  });
+
+  it("does not accept a link token as a bearer, or the reverse", async () => {
+    // Separate types, so neither inherits the other's rules by accident.
+    const link = await forgeToken("l", "dm", 600);
+    const asBearer = await call(mw, "https://v.example/x", {
+      headers: { Authorization: "Bearer " + link },
+    });
+    assert.equal(await asBearer.text(), "/_variants/public/x");
+  });
+
+  it("stops honouring a link token once it expires", async () => {
+    const stale = await forgeToken("l", "dm", -1);
+    const res = await call(mw, "https://v.example/releases/mod.zip?_token=" + stale);
+    assert.equal(await res.text(), "/_variants/public/releases/mod.zip");
+  });
+
+  it("sets no cookie when a link token is used, so it cannot become a session", async () => {
+    const link = await forgeToken("l", "dm", 600);
+    const res = await call(mw, "https://v.example/releases/mod.zip?_token=" + link);
+    assert.equal(res.headers.get("Set-Cookie"), null);
+  });
+
+  it("signs a manifest's download URL so the second install fetch works too", async () => {
+    // Installing is two fetches. The manifest is a static file and cannot
+    // carry a live token for the zip, so the middleware signs it on the way
+    // out; otherwise the install dies halfway with a 401 nobody can read.
+    const link = await forgeToken("l", "dm", 600);
+    const res = await call(
+      mw,
+      "https://v.example/releases/module.json?_token=" + link,
+      {},
+      { ASSETS: { fetch: () => new Response(JSON.stringify({
+        id: "x", download: "https://v.example/releases/mod.zip",
+      })) } },
+    );
+    const body = await res.json() as { download: string };
+    const signed = new URL(body.download);
+    assert.equal(signed.origin, "https://v.example");
+    assert.ok(signed.searchParams.get("_token"), "download URL must carry a token");
+
+    // And that token must actually open the zip.
+    const followed = await call(mw, signed.toString());
+    assert.equal(await followed.text(), "/_variants/dm/releases/mod.zip");
+  });
+
+  it("signs a relative download URL onto whichever host the request arrived on", async () => {
+    // The case that matters in practice: a vault served from both a pages.dev
+    // name and a custom domain. A relative field resolves onto the host in
+    // hand, so one manifest is correct on every domain that serves it.
+    const link = await forgeToken("l", "dm", 600);
+    const res = await call(
+      mw,
+      "https://custom.example/downloads/module.json?_token=" + link,
+      {},
+      { ASSETS: { fetch: () => new Response(JSON.stringify({
+        id: "x", download: "/downloads/mod.zip",
+      })) } },
+    );
+    const body = await res.json() as { download: string };
+    const signed = new URL(body.download);
+    assert.equal(signed.origin, "https://custom.example");
+    assert.ok(signed.searchParams.get("_token"));
+  });
+
+  it("leaves an absolute URL naming the vault's other hostname unsigned", async () => {
+    // Not a bug, and the reason to write the field relative: the middleware
+    // cannot tell the vault's own second domain from anyone else's, so it
+    // refuses both. This cost a real debugging session, hence the test.
+    const link = await forgeToken("l", "dm", 600);
+    const res = await call(
+      mw,
+      "https://custom.example/downloads/module.json?_token=" + link,
+      {},
+      { ASSETS: { fetch: () => new Response(JSON.stringify({
+        id: "x", download: "https://project.pages.dev/downloads/mod.zip",
+      })) } },
+    );
+    const body = await res.json() as { download: string };
+    assert.equal(body.download, "https://project.pages.dev/downloads/mod.zip");
+  });
+
+  it("will not attach our signature to someone else's download URL", async () => {
+    const link = await forgeToken("l", "dm", 600);
+    const res = await call(
+      mw,
+      "https://v.example/releases/module.json?_token=" + link,
+      {},
+      { ASSETS: { fetch: () => new Response(JSON.stringify({
+        id: "x", download: "https://evil.example/mod.zip",
+      })) } },
+    );
+    const body = await res.json() as { download: string };
+    assert.equal(body.download, "https://evil.example/mod.zip", "left exactly as authored");
+  });
+
+  it("leaves an ordinary JSON asset alone", async () => {
+    const link = await forgeToken("l", "dm", 600);
+    const res = await call(
+      mw,
+      "https://v.example/data/scene.json?_token=" + link,
+      {},
+      { ASSETS: { fetch: () => new Response(JSON.stringify({ walls: [] })) } },
+    );
+    assert.deepEqual(await res.json(), { walls: [] });
+  });
+
+  it("does not let a minted link be cached in between", async () => {
+    const res = await call(mw, "https://v.example/_link?path=/a.zip", {
+      headers: { Cookie: dmCookie },
+    });
+    assert.match(res.headers.get("Cache-Control") ?? "", /no-store/);
+  });
+
 });
 
 describe("OAuth state cookie", () => {

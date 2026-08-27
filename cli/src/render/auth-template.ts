@@ -77,11 +77,20 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 // Bearer tokens (used by Foundry, MCP clients) get a much longer lifetime
 // since refreshing means reopening a browser-based approval flow.
 const BEARER_MAX_AGE = 60 * 60 * 24 * 90; // 90 days
+// Long enough to paste a URL somewhere and press install, short enough that a
+// leaked one is worthless. Deliberately not single-use: a use-count needs
+// server-side state, and this deploy has none by design, so the honest
+// stateless equivalent is a small window. Pre-signed URLs everywhere else
+// work the same way for the same reason.
+const LINK_MAX_AGE = 60 * 10; // 10 minutes
 // Tokens carry their purpose so the two are not interchangeable: without
 // this a 7-day session cookie and a 90-day bearer were byte-identical in
 // format, so either could be replayed as the other.
 const TOKEN_TYPE_SESSION = "s";
 const TOKEN_TYPE_BEARER = "b";
+// A link token. Separate from a bearer because it is honoured on ordinary
+// navigation, which a bearer deliberately is not — see readRole.
+const TOKEN_TYPE_LINK = "l";
 const PBKDF2_DEFAULT_ITERATIONS = 100000;
 // Same shape as a real PBKDF2 hash (iterations:saltHex:hashHex with the
 // expected lengths) but with all-zero salt + hash. Used to keep the
@@ -163,6 +172,14 @@ const handleRequest = async (ctx) => {
     return handleConnectApprove(request, env);
   }
 
+  // /_link. Mints a short-lived, self-authenticating URL for one path, for
+  // consumers that cannot carry the session cookie. Foundry's module
+  // installer is the motivating one: it runs on the Foundry server, not in
+  // the browser, so it needs a URL that stands on its own.
+  if (url.pathname === "/_link" && request.method === "GET") {
+    return handleLink(request, env);
+  }
+
   // /auth/patreon/* — only mounted when the build saw a Patreon config.
   // Issues the same signed session cookie as password login on success;
   // failure paths bounce back to /login with an error param.
@@ -210,6 +227,20 @@ const handleRequest = async (ctx) => {
   // Determine the user's role from the session cookie (default = lowest).
   const role = await readRole(request, env);
 
+  // Installing a Foundry module is two fetches: the manifest, then the zip its
+  // download field names. A gated manifest is a static file, so it cannot
+  // carry a live token for that second fetch, and the zip would 401 — the
+  // install fails halfway with nothing useful said about why.
+  //
+  // So a manifest fetched with a link token gets its download URL signed to
+  // match, with the same short expiry. The rewrite only ever fires when a
+  // valid link token is present and the field points back at this site, so it
+  // cannot be used to attach our signature to somebody else's URL.
+  const linkToken = new URL(request.url).searchParams.get("_token");
+  const linkRole = linkToken
+    ? await verifyToken(linkToken, env.SESSION_SECRET, TOKEN_TYPE_LINK)
+    : null;
+
   // env.ASSETS canonicalizes URLs (strips .html, strips index.html, redirects
   // with 308s); passing those redirects through to the browser would expose
   // the /_variants/<role>/ path, which the guard at the top of this function
@@ -225,6 +256,11 @@ const handleRequest = async (ctx) => {
       response = await env.ASSETS.fetch(rewritten);
     }
   }
+  if (linkRole && response.ok && /\.json$/i.test(url.pathname)) {
+    const signed = await signManifestDownload(response, url, env, linkRole);
+    if (signed) return signed;
+  }
+
   // Replace bare 404s with the variant's styled 404 page so the reader stays
   // inside the site (sidebar, search, sitemap intact). Only HTML navigation
   // requests get the page; asset/API requests get the bare 404 unchanged.
@@ -355,10 +391,31 @@ async function handleBatchInner(request, env, maxPaths, encode) {
     if (!isSafePath(p)) return batchError(400, "Invalid path: " + p);
   }
 
-  // ASSETS.fetch is internal to the worker, so fan-out is cheap.
+  // Which rendering to return, which is not always the caller's own.
+  //
+  // A page carries its own role, and the sync client marks a page readable by
+  // players when that role is below the DM tier. If it then filled that page
+  // with the *DM's* rendering — which is what happens when the variant is
+  // always the caller's — a public page ends up holding DM content and
+  // readable by players. A base view filtered by role is exactly that shape:
+  // one row per creature for the DM, one for everyone else, same page.
+  //
+  // So a caller may ask for any variant at or below their own tier. Below,
+  // because that is content they can already read; never above.
   const url = new URL(request.url);
+  const requested = url.searchParams.get("role");
+  let variant = role;
+  if (requested !== null) {
+    const wantIdx = ROLES.indexOf(requested);
+    if (wantIdx === -1 || wantIdx > ROLES.indexOf(role)) {
+      return batchError(403, "Cannot request that variant.");
+    }
+    variant = requested;
+  }
+
+  // ASSETS.fetch is internal to the worker, so fan-out is cheap.
   const entries = await Promise.all(paths.map(async (p) => {
-    const target = new URL("/_variants/" + role + "/" + encodeVariantPath(p), url.origin).toString();
+    const target = new URL("/_variants/" + variant + "/" + encodeVariantPath(p), url.origin).toString();
     const res = await env.ASSETS.fetch(target);
     if (!res.ok) return [p, null];
     return [p, await encode(res)];
@@ -442,6 +499,93 @@ async function handleConnectApprove(request, env) {
   const token = await signToken(role, env.SESSION_SECRET, BEARER_MAX_AGE, TOKEN_TYPE_BEARER);
   const html = renderConnectCopyPage({ token, role, app });
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+}
+
+/**
+ * Issue a short-lived URL for a single vault path.
+ *
+ * The token carries the caller's own role, so this grants nothing they could
+ * not already fetch with their cookie; it only moves that authority into a
+ * URL, and puts a short clock on it.
+ *
+ * The path is confined to this deploy: it is resolved against the origin and
+ * rejected if it leaves, so a caller cannot get us to sign a link pointing at
+ * somewhere else.
+ */
+async function handleLink(request, env) {
+  const url = new URL(request.url);
+  // Minting requires a session or a bearer, never a link token: otherwise one
+  // leaked install URL renews itself indefinitely instead of expiring.
+  const role = await readRole(request, env, { rejectLinkTokens: true });
+  if (role === ROLES[0]) {
+    return jsonResponse({ error: "not signed in" }, 401);
+  }
+  const requested = url.searchParams.get("path") || "";
+  if (!requested) {
+    return jsonResponse({ error: "missing path" }, 400);
+  }
+  let target;
+  try {
+    target = new URL(requested, url.origin);
+  } catch {
+    return jsonResponse({ error: "bad path" }, 400);
+  }
+  if (target.origin !== url.origin) {
+    return jsonResponse({ error: "path must be on this site" }, 400);
+  }
+  const token = await signToken(role, env.SESSION_SECRET, LINK_MAX_AGE, TOKEN_TYPE_LINK);
+  target.searchParams.set("_token", token);
+  return jsonResponse({
+    url: target.toString(),
+    role,
+    expiresInMinutes: Math.round(LINK_MAX_AGE / 60),
+  }, 200);
+}
+
+/**
+ * Re-sign a module manifest's download URL so the second half of a Foundry
+ * install authenticates too.
+ *
+ * Returns null and leaves the response untouched for anything that is not a
+ * manifest with a same-origin download field, so an ordinary JSON asset
+ * fetched with a link token is served exactly as stored.
+ */
+async function signManifestDownload(response, url, env, role) {
+  let manifest;
+  try { manifest = await response.clone().json(); }
+  catch { return null; }
+  if (!manifest || typeof manifest.download !== "string") return null;
+
+  // Relative resolves onto whichever host this request arrived on, which is
+  // the point: a vault can be served from several (a pages.dev name and a
+  // custom domain), and a manifest that hard-codes one of them is wrong on
+  // the others whether or not tokens are involved.
+  //
+  // An absolute URL naming a different host is left alone. That is the guard
+  // against attaching our signature to somebody else's URL, and it cannot
+  // distinguish the vault's own second hostname from anyone else's — so a
+  // manifest that hard-codes the pages.dev name will not be signed when
+  // fetched over the custom domain. Write the field relative. The CLI warns
+  // when it is not.
+  let target;
+  try { target = new URL(manifest.download, url.origin); }
+  catch { return null; }
+  if (target.origin !== url.origin) return null;
+
+  const token = await signToken(role, env.SESSION_SECRET, LINK_MAX_AGE, TOKEN_TYPE_LINK);
+  target.searchParams.set("_token", token);
+  manifest.download = target.toString();
+  return new Response(JSON.stringify(manifest), {
+    status: 200,
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  });
+}
+
+function jsonResponse(body, status) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  });
 }
 
 function renderApprovePage({ app, role }) {
@@ -938,7 +1082,7 @@ async function readStateCookie(request, secret) {
 
 // ── Cookie + role lookup ──────────────────────────────────────────────────
 
-async function readRole(request, env) {
+async function readRole(request, env, opts) {
   const fallback = ROLES[0];
   if (!env.SESSION_SECRET) return fallback;
 
@@ -972,6 +1116,24 @@ async function readRole(request, env) {
   const queryToken = new URL(request.url).searchParams.get("_token");
   if (queryToken && isSubresourceFetch(request)) {
     const role = await verifyToken(queryToken, env.SESSION_SECRET, TOKEN_TYPE_BEARER);
+    if (role && ROLES.includes(role)) return role;
+  }
+
+  // A link token IS honoured on navigation, which is the whole reason it is a
+  // separate type. The rule above rests on bearers lasting 90 days; a link
+  // token lasts ten minutes, so the same reasoning does not reach it. It also
+  // has to work this way: Foundry's module installer accepts a URL and
+  // nothing else, so it cannot send the Authorization header the rule above
+  // points anything header-capable towards.
+  //
+  // It authenticates one request and sets no cookie, so a shared link does
+  // not turn into a session at someone else's role.
+  // Not accepted where a caller could use one to obtain another. A link token
+  // is a ten-minute grant, and a request that can mint a fresh one renews
+  // itself forever — which would quietly turn the short window that justifies
+  // honouring these on navigation into no window at all.
+  if (queryToken && !opts?.rejectLinkTokens) {
+    const role = await verifyToken(queryToken, env.SESSION_SECRET, TOKEN_TYPE_LINK);
     if (role && ROLES.includes(role)) return role;
   }
 

@@ -191,6 +191,92 @@ now gated on the same list as the blank-document form (`BLANK_DOC_TYPES` in
 foundry/scripts/foundry-base.mjs), because the real constraint is identical —
 the type needs a world collection to be created in.
 
+## Should sync import into a compendium?
+
+Today sync writes world documents. The module compiler writes compendium packs.
+Keeping those two in step is ongoing work, and the parity chase in the module
+compiler is what raised the question: if sync produced a compendium too, they
+would be one artifact delivered two ways — HTTP pull or zip install — and could
+not drift, because there would be nothing to keep in step.
+
+The better argument is not parity though. It is ownership. Sync re-applies
+`foundry.data` on every run, so a GM editing one of those fields loses the edit,
+and the documentation has to warn about it. A vault that owned a compendium
+would never touch a document the GM owns. The boundary stops being "we
+overwrite these fields and you keep the rest" and becomes "this is ours, that
+is yours".
+
+The obvious objection mostly dissolves: Foundry opens compendium journal
+entries read-only in place, so a reader browses the vault without importing —
+and an unimported page stays current, because sync updates the compendium under
+it. The living-wiki property survives.
+
+It also settles a question the current design keeps having to answer badly:
+**how much of a document does the vault own?** Writing into a world means
+picking, per field, between the vault's answer and the GM's, and the codebase
+is full of that choice being made one case at a time:
+
+- `foundry.data` is reapplied every sync and everything else is preserved,
+  which is a rule authors have to learn and the docs have to warn about.
+- `if (!forceFull) delete updatePatch.folder` — a GM who drags a document into
+  their own folder keeps it there, so folder placement is the GM's except when
+  it is not.
+- `foundry.base` is consulted only on create, so a GM editing a document is
+  never silently re-based — which is also why a changed base does nothing and
+  says nothing, recorded above as a gap.
+- Missing documents are reported rather than repaired, because re-creating one
+  a GM deleted on purpose would be worse than leaving it missing.
+- The Map Note is replaced every sync, which also moves it back if the GM
+  moved it.
+
+Every one of those is a reasonable answer to a question that would not exist.
+A compendium the vault owns is rebuilt wholesale: always overwrite, no
+per-field ownership, no create-only rules, no reporting-rather-than-repairing.
+The GM's copy is whatever they imported, and the vault never sees it.
+
+None of that costs the incremental sync. The two are orthogonal: the manifest
+diff decides *which* documents are touched, and always-overwrite decides *how*
+the touched ones are written. An unchanged page hash still means no fetch and
+no write.
+
+It improves the incremental path, in fact. `findMissingDocuments` exists
+because a page whose hash has not changed is never revisited, so a document
+deleted in the world stays missing while every later sync reports "already up
+to date" — and it can only report, because re-creating something a GM deleted
+on purpose would be wrong. Against a compendium the vault owns, deleting an
+entry is not a decision to respect, so the same check can repair instead. Force
+Sync stops being a destructive button and becomes merely a slow one.
+
+What does not change is the failure bookkeeping: `failedPages` and
+`failedDeletes` still have to keep their hashes out of the persisted manifest,
+so a page that failed is retried rather than looking synced forever. That is
+about failure, not ownership.
+
+It lowers the stakes on ids too. `ID_SCHEME` exists because changing the
+derivation orphans every document in every synced world and cannot be undone
+by the user. Orphaning entries in a compendium the vault owns is fixed by
+deleting the compendium and syncing again.
+
+What it costs:
+
+- **An imported document stops receiving updates, silently.** That is the same
+  fact as the benefit, seen from the other side, and it needs an answer:
+  re-import, or something that notices drift and says so.
+- **Migration is the hard part.** Every synced vault has world documents at
+  deterministic ids. Moving them into a compendium changes their UUIDs, which
+  breaks inter-page `@UUID` links, macros reaching a pinned `foundry.id`, and
+  canvas tokens pointing at a synced actor. That is the class of change
+  `ID_SCHEME` exists to guard against, so it needs a real migration or a long
+  period where both exist.
+- **Some documents want to be world-level anyway** — a Scene being run, an
+  Actor with tokens placed, a Macro on the hotbar. Those get imported, which is
+  fine, but it means the model is "compendium plus imports", not "compendium".
+
+Unverified and load-bearing: that a module can create and write a world-level
+compendium at runtime. Foundry exposes it (`CompendiumCollection.createCompendium`,
+and the sidebar's Create Compendium), but there was none in the test world to
+observe, and the whole design rests on it. Test that before designing further.
+
 ### Moulinette: research
 
 Creators often distribute through both channels. The first sketch made
