@@ -358,6 +358,15 @@ foundry:
     version: 1.0.0
 ```
 
+Compile it with:
+
+```bash
+vaults build . --module              # writes downloads/module.json + the zip
+vaults build . --module ./dist       # somewhere else, vault-relative
+```
+
+The directory has to be inside the vault, because the deploy is what serves the zip and the manifest's own `download` URL points at it. A module whose manifest names its own download URL (a GitHub release, say) is built in place beside that manifest instead, and the directory is ignored.
+
 `module` is only needed if you compile a downloadable module. Anything Foundry accepts in a `module.json` goes in it, and only `packs` is written for you — `title` defaults to your `vault_name` and `compatibility` to v13+/v14. A module with its own scripts, styles or translations wants a real `module.json` at the vault root or in `foundry/` instead, and the compiler prefers that file when both exist.
 
 ## `foundry.player_role`: what your players can read

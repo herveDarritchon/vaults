@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolve, isAbsolute } from "node:path";
 import { buildFoundryModule } from "../foundry-module.js";
 import { loadSettings } from "../settings.js";
 import { loadConfig } from "../config.js";
@@ -8,8 +8,28 @@ import { defaultOutputDir, requireInitialisedVault } from "../paths.js";
 interface BuildOptions {
   output?: string;
   allWarnings?: boolean;
-  /** Compile the vault into an installable Foundry module first. */
-  module?: boolean;
+  /**
+   * Compile the vault into an installable Foundry module first. `true` for a
+   * bare `--module`; a vault-relative directory when one is given.
+   */
+  module?: boolean | string;
+}
+
+/**
+ * A vault-relative directory from whatever the user typed.
+ *
+ * `./downloads`, `downloads/` and `downloads` are the same place, and the
+ * value ends up in the manifest's own `download` URL, so a stray `./` or
+ * trailing slash would be visible to whoever installs the module.
+ */
+export function normalizeVaultRelative(dir: string): string {
+  const cleaned = dir.trim().replace(/^\.\/+/, "").replace(/\/+$/, "");
+  if (!cleaned || cleaned.startsWith("..") || isAbsolute(cleaned)) {
+    throw new Error(
+      `--module ${dir}: the directory must be inside the vault, since the deploy is what serves it.`,
+    );
+  }
+  return cleaned;
 }
 
 export async function build(vaultPath: string, opts: BuildOptions): Promise<void> {
@@ -23,13 +43,19 @@ export async function build(vaultPath: string, opts: BuildOptions): Promise<void
   // lists the vault's files once at the start, so anything appearing later is
   // invisible to the build that should ship it. Render, compile, render again.
   if (opts.module) {
+    // `--module` alone is `true`; `--module <dir>` is the string. Vault-relative
+    // because that is where it lands: the zip is served by the deploy, so a path
+    // outside the vault would produce a manifest pointing at nothing.
+    const moduleDir = typeof opts.module === "string" && opts.module.trim()
+      ? normalizeVaultRelative(opts.module)
+      : "downloads";
     console.log(`Rendering ${vaultPath} (pass 1 of 2, for the module's journals)...`);
     await buildSite({ vaultPath, outputDir, allWarnings: false });
 
     console.log("Compiling Foundry module...");
     const built = await buildFoundryModule({
       vaultPath,
-      outputDir: "downloads",
+      outputDir: moduleDir,
       renderedDir: outputDir,
       renderedRole: await lowestRole(vaultPath),
       foundryPackage: (await loadSettings(vaultPath)).values.foundry.package,

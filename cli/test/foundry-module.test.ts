@@ -257,3 +257,24 @@ describe("packFolders", () => {
     assert.equal(manifest["packFolders"], undefined);
   });
 });
+
+describe("--module output directory", () => {
+  it("normalises the forms of the same directory", async () => {
+    // The value ends up in the manifest's own `download` URL, so a stray `./`
+    // or trailing slash would be visible to whoever installs the module.
+    const { normalizeVaultRelative } = await import("../src/commands/build.js");
+    for (const input of ["downloads", "./downloads", "downloads/", "./downloads/"]) {
+      assert.equal(normalizeVaultRelative(input), "downloads", input);
+    }
+    assert.equal(normalizeVaultRelative("build/foundry"), "build/foundry");
+  });
+
+  it("refuses a directory the deploy could not serve", async () => {
+    // The zip is served by the vault, so a path outside it compiles happily
+    // and produces a manifest pointing at nothing.
+    const { normalizeVaultRelative } = await import("../src/commands/build.js");
+    for (const bad of ["../outside", "/tmp/abs", "  ", "./"]) {
+      assert.throws(() => normalizeVaultRelative(bad), /inside the vault/, bad);
+    }
+  });
+});
