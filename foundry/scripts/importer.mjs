@@ -17,7 +17,7 @@
 
 import { MODULE_ID } from "./settings.mjs";
 import { instanceUuid } from "./packs.mjs";
-import { docNameFromBase } from "./foundry-base.mjs";
+import { docNameFromBase, journalPageSpec, CORE_PAGE_TYPES } from "./foundry-base.mjs";
 import { entryId, pageId, folderId, folderOfPath, instanceId } from "./ids.mjs";
 import { transformHtmlForFoundry } from "./links.mjs";
 import { escapeBraces } from "./util.mjs";
@@ -103,6 +103,44 @@ function isIndexFile(filename) {
  * folder-keyed (see ids.mjs). The first call for a folder creates the
  * entry with the file's page; subsequent calls embed additional pages.
  */
+/**
+ * The page type to actually write, degrading to `text` when this world has no
+ * such type.
+ *
+ * Core ships four; everything else comes from the game system, so a vault
+ * asking for a dnd5e `map` or `spells` page is asking for something a
+ * different system's world cannot construct. Foundry would reject the whole
+ * page; degrading keeps the article and says why, which is how an unresolvable
+ * `foundry.base` rung behaves too.
+ */
+function resolvePageType(want, path) {
+  if (want === "text") return "text";
+  const known = new Set([
+    ...CORE_PAGE_TYPES,
+    ...(game.documentTypes?.JournalEntryPage ?? []),
+  ]);
+  if (known.has(want)) return want;
+  console.warn(
+    `Vaults | ${path}: this world has no "${want}" journal page type `
+    + `(${game.system?.id ?? "no system"} provides ${[...known].join(", ")}). `
+    + `Imported as a text page instead.`,
+  );
+  return "text";
+}
+
+/** Deep-merge an overlay onto page data, arrays and scalars replacing. */
+function deepMergePage(target, patch) {
+  for (const [k, v] of Object.entries(patch)) {
+    if (v && typeof v === "object" && !Array.isArray(v)
+        && target[k] && typeof target[k] === "object" && !Array.isArray(target[k])) {
+      deepMergePage(target[k], v);
+    } else {
+      target[k] = v;
+    }
+  }
+  return target;
+}
+
 export async function upsertFile(target, vault, path, body, index, meta, folderInfo, mediaRefs) {
   let html = await transformHtmlForFoundry(vault, body, index, mediaRefs);
   html = await appendInstanceDocLink(html, vault, path, meta);
@@ -143,11 +181,18 @@ export async function upsertFile(target, vault, path, body, index, meta, folderI
   const pageOwnership = pageOwnershipLevelFor(vault, meta?.role);
 
   const flags = { [MODULE_ID]: { vaultId: vault.id, path } };
+  // `foundry.journal` as an overlay: type, title, category, src, system.
+  // Resolved against this world, which is the only place that knows which
+  // page types exist — most of them come from the game system, not core.
+  const spec = journalPageSpec(meta?.foundry);
+  const type = resolvePageType(spec.type, path);
   const pageData = {
     _id: pId,
     name: pageName,
-    type: "text",
-    text: { content: html, format: 1 /* HTML */ },
+    type,
+    // A page whose content is its `src` has nowhere to put an article, so the
+    // body is dropped rather than written somewhere it will not be read.
+    ...(type === "text" ? { text: { content: html, format: 1 /* HTML */ } } : {}),
     sort: isIndexFile(filename) ? 0 : NON_INDEX_SORT_BASE,
     flags,
     // Ownership is set on the *page*, not the parent entry: in the
@@ -159,6 +204,7 @@ export async function upsertFile(target, vault, path, body, index, meta, folderI
     // page in it). See reconcileOwnership below.
     ...(pageOwnership !== null ? { ownership: { default: pageOwnership } } : {}),
   };
+  if (Object.keys(spec.overlay).length > 0) deepMergePage(pageData, spec.overlay);
 
   const existing = await target.get("JournalEntry", eId);
   if (existing) {

@@ -15,7 +15,11 @@ import assert from "node:assert/strict";
 import { CASES } from "../../foundry/test/foundry-base.test.mjs";
 import { foundryBaseDocName } from "../src/foundry-meta.js";
 import { resolveSelfContainedBase, PACK_KEY } from "../src/foundry-module.js";
-import { PACK_KEY as MODULE_PACK_KEY } from "../../foundry/scripts/foundry-base.mjs";
+import { CORE_PAGE_TYPES, journalPageSpec } from "../src/foundry-meta.js";
+import {
+  PACK_KEY as MODULE_PACK_KEY, CORE_PAGE_TYPES as MODULE_CORE_PAGE_TYPES,
+  journalPageSpec as moduleJournalPageSpec,
+} from "../../foundry/scripts/foundry-base.mjs";
 
 describe("foundry.base doc-type conformance", () => {
   it("matches the Foundry module on every case", () => {
@@ -68,5 +72,31 @@ describe("foundry.base doc-type conformance", () => {
   // quietly stops holding for that document type.
   it("agrees with the module on every compendium pack key", () => {
     assert.deepEqual(PACK_KEY, MODULE_PACK_KEY);
+  });
+
+  // `foundry.journal` is read twice, once by the sync client and once by the
+  // compiler, and they must agree on the page each produces. A disagreement
+  // here is a page that is one type when synced and another when installed.
+  it("agrees with the module on every foundry.journal shape", () => {
+    assert.deepEqual(CORE_PAGE_TYPES, MODULE_CORE_PAGE_TYPES);
+    const cases: Array<Record<string, unknown> | undefined> = [
+      undefined,
+      {},
+      { journal: false },
+      { journal: true },
+      { journal: {} },
+      { journal: { type: "spells" } },
+      { journal: { type: "map", system: { grouping: "level" } } },
+      { journal: { title: { show: false, level: 2 } } },
+      { journal: { type: "", title: {} } },
+      { journal: ["not", "an", "object"] },
+      { journal: "text" },
+    ];
+    for (const fm of cases) {
+      assert.deepEqual(
+        journalPageSpec(fm), moduleJournalPageSpec(fm),
+        `disagreed on ${JSON.stringify(fm)}`,
+      );
+    }
   });
 });

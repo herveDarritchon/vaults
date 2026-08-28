@@ -38,12 +38,11 @@ foundry:
     system: { type: class, grouping: level }
 ```
 
-Open questions, in the order they bite:
+Decided:
 
-- **Where does the page body go for a non-text type?** A `text` page puts the rendered HTML in `text.content`. An `image`, `video` or `pdf` page's content *is* its `src`, and the prose has nowhere to live. Either the markdown becomes a caption, or declaring such a type means the article is dropped and the author should be told so.
-- **What happens in a world without the type?** A vault declaring `type: map` in a non-dnd5e world produces a page Foundry cannot construct. Degrading to `text` is probably right, with a warning, and matches how a `foundry.base` rung degrades.
-- **How much of this belongs in `default_frontmatter`?** Setting `type: rule` on a whole `Rules/**` folder is one rule; setting it per page is thirty.
-- **The compiler has to agree.** `vaults build --module` writes the same pages, so whatever shape this takes has to compile as well as sync, or the two diverge again.
+- **A non-text page drops the article body.** An `image`, `video` or `pdf` page's content *is* its `src`, so there is nowhere for prose to live. Say so at build time rather than silently discarding it.
+- **A world without the type degrades to `text`, with a warning.** Same as a `foundry.base` rung that cannot resolve. Only sync can do this, since it runs inside the world and can ask what types exist; the compiler writes what the vault declared and cannot know the reader's system.
+- **The compiler writes the same pages as sync**, or the two diverge again.
 
 ## 3. Separating vaults from Foundry
 

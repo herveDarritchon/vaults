@@ -30,7 +30,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import matter from "gray-matter";
-import { canonicalFoundryType, loadDataJson } from "./foundry-meta.js";
+import { canonicalFoundryType, loadDataJson, journalPageSpec } from "./foundry-meta.js";
 import { loadConfig } from "./config.js";
 import { applyFrontmatterDefaults, compileFrontmatterRules, type CompiledRule } from "./frontmatter-defaults.js";
 import { buildFolders, renderBody, type LinkEntry } from "./foundry-module-render.js";
@@ -695,7 +695,16 @@ export async function buildFoundryModule(opts: ModuleOptions): Promise<ModuleRes
     for (const page of journalPages) {
       const html = await readRenderedBody(opts, page.path);
       if (html === null) continue;
-      journalSources.push({ path: page.path, title: page.title, html });
+      // Read once, the same way the sync client reads it, so an installed
+      // module and a synced vault produce the same page.
+      const spec = journalPageSpec(page.foundry ?? undefined);
+      if (spec?.dropsBody && html.trim()) {
+        console.warn(
+          `    ${page.path}: a "${spec.type}" journal page has no body, so its article `
+          + `is not carried into the module. Its content is whatever 'src' names.`,
+        );
+      }
+      journalSources.push({ path: page.path, title: page.title, html, spec: spec ?? undefined });
       const eId = journalEntryId(moduleId, page.path);
       const pId = journalPageId(moduleId, page.path);
       journalTargets.set(page.path, {

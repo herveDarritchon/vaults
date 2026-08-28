@@ -40,6 +40,32 @@ export const PACK_KEY = {
   Playlist: "playlists",
 };
 
+/** Page types Foundry itself ships. Anything else comes from the system. */
+export const CORE_PAGE_TYPES = ["text", "image", "pdf", "video"];
+
+/**
+ * Read `foundry.journal` as an overlay onto the JournalEntryPage.
+ *
+ * It started as a boolean meaning "make a page or not", and `false` still
+ * means that. An object is a patch applied over the page the sync would have
+ * built anyway, which is the idiom `foundry.data` already uses for the
+ * instantiated document: type, `title`, `category`, `src`, and a `system`
+ * block for whatever the game system's own page types want.
+ *
+ * @returns `null` when the page opts out, else `{ type, overlay, dropsBody }`.
+ *   `dropsBody` is true for a type whose content *is* its `src` — an image,
+ *   video or PDF page has nowhere to put an article, so the prose is dropped
+ *   and the caller says so rather than discarding it quietly.
+ */
+export function journalPageSpec(fm) {
+  const j = fm?.journal;
+  if (j === false) return null;
+  const overlay = j && typeof j === "object" && !Array.isArray(j) ? { ...j } : {};
+  const type = typeof overlay.type === "string" && overlay.type ? overlay.type : "text";
+  delete overlay.type;
+  return { type, overlay, dropsBody: type !== "text" };
+}
+
 /** Document types `foundry.base: <Type>[:<subtype>]` can create. */
 export const BLANK_DOC_TYPES = [
   "Actor", "Item", "Scene", "JournalEntry",

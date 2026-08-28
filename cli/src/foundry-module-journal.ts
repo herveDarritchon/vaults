@@ -33,6 +33,8 @@ export interface JournalSource {
   title: string;
   /** Rendered body HTML, as served to the wiki and to the sync client. */
   html: string;
+  /** The page's `foundry.journal` overlay, already read. */
+  spec?: { type: string; overlay: Record<string, unknown>; dropsBody: boolean };
 }
 
 export interface JournalTarget {
@@ -108,6 +110,22 @@ export interface JournalEntryDoc {
  * an entry named for the module — the same shape the sync path produces, where
  * a directory becomes an entry and its files become that entry's pages.
  */
+/** Deep-merge an overlay onto page data, arrays and scalars replacing. */
+function deepMergePage(
+  target: Record<string, unknown>, patch: Record<string, unknown>,
+): Record<string, unknown> {
+  for (const [k, v] of Object.entries(patch)) {
+    const cur = target[k];
+    if (v && typeof v === "object" && !Array.isArray(v)
+        && cur && typeof cur === "object" && !Array.isArray(cur)) {
+      deepMergePage(cur as Record<string, unknown>, v as Record<string, unknown>);
+    } else {
+      target[k] = v;
+    }
+  }
+  return target;
+}
+
 export function buildJournalEntries(
   sources: JournalSource[],
   ns: string,
@@ -130,18 +148,24 @@ export function buildJournalEntries(
       name: folder ? folder.split("/").pop()! : rootName,
       pages: pages.map((p, i) => {
         const pid = journalPageId(ns, p.path);
-        return {
+        const type = p.spec?.type ?? "text";
+        const page: Record<string, unknown> = {
           _id: pid,
           name: p.title,
-          type: "text",
+          type,
           title: { show: true, level: 1 },
-          text: { format: 1, content: p.html },
+          // A page whose content is its `src` has nowhere to put an article.
+          // Unlike sync, the compiler cannot degrade an unknown type: it does
+          // not know the system of the world this module will be installed in.
+          ...(type === "text" ? { text: { format: 1, content: p.html } } : {}),
           sort: (i + 1) * 100000,
           ownership: { default: -1 },
           flags: {},
           _stats: stats,
           _key: `!journal.pages!${id}.${pid}`,
         };
+        if (p.spec && Object.keys(p.spec.overlay).length > 0) deepMergePage(page, p.spec.overlay);
+        return page as JournalEntryDoc["pages"][number];
       }),
       folder: null,
       sort: 0,

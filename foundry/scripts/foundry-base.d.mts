@@ -7,3 +7,11 @@
 
 /** Document type to compendium pack name fragment. */
 export declare const PACK_KEY: Record<string, string>;
+
+/** Page types Foundry itself ships. */
+export declare const CORE_PAGE_TYPES: string[];
+
+/** Read `foundry.journal` as a JournalEntryPage overlay; null when opted out. */
+export declare function journalPageSpec(
+  fm: Record<string, unknown> | undefined,
+): { type: string; overlay: Record<string, unknown>; dropsBody: boolean } | null;

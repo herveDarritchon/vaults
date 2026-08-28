@@ -293,3 +293,35 @@ export async function loadDataJson(
 /** Foundry document ids: exactly 16 chars from [A-Za-z0-9]. Validated when
  *  authors set `foundry.id` to override the SHA1-derived default. */
 const FOUNDRY_ID_RE = /^[A-Za-z0-9]{16}$/;
+
+/** Page types Foundry itself ships. Anything else comes from the game system. */
+export const CORE_PAGE_TYPES = ["text", "image", "pdf", "video"];
+
+export interface JournalPageSpec {
+  type: string;
+  overlay: Record<string, unknown>;
+  /** True when the type's content is its `src`, so an article has nowhere to go. */
+  dropsBody: boolean;
+}
+
+/**
+ * Read `foundry.journal` as an overlay onto the JournalEntryPage.
+ *
+ * `false` still means "make no page". An object is a patch over the page that
+ * would have been built anyway, the same idiom `foundry.data` uses for the
+ * instantiated document.
+ *
+ * The CLI's copy of foundry/scripts/foundry-base.mjs's function, for the
+ * reason described at the top of this file, and held to it by
+ * cli/test/foundry-base-conformance.test.ts.
+ */
+export function journalPageSpec(fm: Record<string, unknown> | undefined): JournalPageSpec | null {
+  const j = fm?.["journal"];
+  if (j === false) return null;
+  const overlay: Record<string, unknown> =
+    j && typeof j === "object" && !Array.isArray(j) ? { ...j as Record<string, unknown> } : {};
+  const raw = overlay["type"];
+  const type = typeof raw === "string" && raw ? raw : "text";
+  delete overlay["type"];
+  return { type, overlay, dropsBody: type !== "text" };
+}

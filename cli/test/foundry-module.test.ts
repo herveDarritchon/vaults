@@ -334,3 +334,43 @@ describe("--module output directory", () => {
     }
   });
 });
+
+describe("journal page overlays", () => {
+  it("writes a typed page and drops the body it cannot hold", async () => {
+    // An image, video or PDF page's content is its `src`, so there is nowhere
+    // for an article to live. Writing `text.content` anyway would ship prose
+    // Foundry never renders.
+    const { buildJournalEntries } = await import("../src/foundry-module-journal.js");
+    const entries = buildJournalEntries([
+      { path: "Maps/Delta.md", title: "Delta", html: "<p>prose</p>",
+        spec: { type: "image", overlay: { src: "maps/delta.webp" }, dropsBody: true } },
+    ], "mod", "Root", {});
+    const page = entries[0]!.pages[0]! as Record<string, unknown>;
+    assert.equal(page["type"], "image");
+    assert.equal(page["src"], "maps/delta.webp");
+    assert.equal(page["text"], undefined, "no body on a page whose content is its src");
+  });
+
+  it("deep-merges the overlay without losing what the build set", async () => {
+    const { buildJournalEntries } = await import("../src/foundry-module-journal.js");
+    const entries = buildJournalEntries([
+      { path: "Rules/Casting.md", title: "Casting", html: "<p>prose</p>",
+        spec: { type: "text", overlay: { title: { show: false } }, dropsBody: false } },
+    ], "mod", "Root", {});
+    const page = entries[0]!.pages[0]! as Record<string, unknown>;
+    const title = page["title"] as Record<string, unknown>;
+    assert.equal(title["show"], false, "the overlay wins");
+    assert.equal(title["level"], 1, "and the sibling the build set survives");
+    assert.equal((page["text"] as Record<string, unknown>)["content"], "<p>prose</p>");
+  });
+
+  it("a page with no foundry block is an ordinary text page", async () => {
+    const { buildJournalEntries } = await import("../src/foundry-module-journal.js");
+    const entries = buildJournalEntries([
+      { path: "Lore/Thing.md", title: "Thing", html: "<p>prose</p>" },
+    ], "mod", "Root", {});
+    const page = entries[0]!.pages[0]! as Record<string, unknown>;
+    assert.equal(page["type"], "text");
+    assert.equal((page["text"] as Record<string, unknown>)["content"], "<p>prose</p>");
+  });
+});
