@@ -1,6 +1,6 @@
 # Releasing Vaults
 
-How to cut a release for the `@wizzlethorpe/vaults` CLI and the Vaults Foundry
+How to cut a release for the `@hervedarritchon/vaults` CLI and the Vaults Foundry
 module. Both ship under a **single shared version** (`v0.1.0`, `v0.2.0`, …)
 so a `vX.Y.Z` tag pins the exact behavior of CLI + Foundry together.
 
@@ -55,7 +55,7 @@ Optional flags (any position): `--skip-cli`, `--skip-foundry`.
    makes a single `Release vX.Y.Z` commit and an annotated `vX.Y.Z` tag.
 3. **Push** — pushes `main` and the tag to `origin` *before* the subproject
    pipelines, so the GitHub release points at the exact commit.
-4. **CLI** — `pnpm --filter @wizzlethorpe/vaults run build && publish`.
+4. **CLI** — `pnpm --filter @hervedarritchon/vaults run build && publish`.
    The build is `tsc` (→ `dist/`) plus `scripts/bundle-importer.mjs`, which
    re-bundles the Foundry sync code into `dist/foundry-importer.bundle.js`
    (shipped to deploys as `_foundry/importer.js`). `prepublishOnly` rebuilds

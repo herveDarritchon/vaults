@@ -134,8 +134,8 @@ git push origin main "v$NEW_VERSION"
 if [[ $SKIP_CLI -eq 0 ]]; then
   echo ""
   echo "=== Publishing CLI to npm ==="
-  pnpm --filter @wizzlethorpe/vaults run build
-  pnpm --filter @wizzlethorpe/vaults publish --access public --no-git-checks
+  pnpm --filter @hervedarritchon/vaults run build
+  pnpm --filter @hervedarritchon/vaults publish --access public --no-git-checks
 fi
 
 if [[ $SKIP_FOUNDRY -eq 0 ]]; then
@@ -156,7 +156,7 @@ fi
 
 echo ""
 echo "Released v$NEW_VERSION."
-echo "  npm:     https://www.npmjs.com/package/@wizzlethorpe/vaults/v/$NEW_VERSION"
+echo "  npm:     https://www.npmjs.com/package/@hervedarritchon/vaults/v/$NEW_VERSION"
 echo "  github:  https://github.com/wizzlethorpe/vaults/releases/tag/v$NEW_VERSION"
 echo ""
 echo "Landing deploy is separate (no version coupling): cd landing && vaults push"

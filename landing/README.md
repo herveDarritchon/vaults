@@ -64,7 +64,7 @@ vaults/                    ← this repo (a working Vault, not a static site)
 
 ```bash
 # install the CLI
-npm install -g @wizzlethorpe/vaults
+npm install -g @hervedarritchon/vaults
 
 # clone this repo
 git clone https://github.com/wizzlethorpe/vaults.git

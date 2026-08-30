@@ -5,7 +5,7 @@ Sync an Obsidian vault to a Cloudflare-hosted wiki. The CLI renders your notes l
 ## Install
 
 ```bash
-npm install -g @wizzlethorpe/vaults
+npm install -g @hervedarritchon/vaults
 ```
 
 Requires Node.js 22 or newer. Works on macOS, Linux, and Windows.

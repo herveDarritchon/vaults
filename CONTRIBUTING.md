@@ -18,7 +18,7 @@ Bug reports, feature requests, and pull requests are all welcome across any of t
 
    | Touched | Run |
    |---|---|
-   | `cli/` | `pnpm typecheck && pnpm -r test && pnpm --filter @wizzlethorpe/vaults run build` |
+   | `cli/` | `pnpm typecheck && pnpm -r test && pnpm --filter @hervedarritchon/vaults run build` |
    | `foundry/` | Manually verify against a real Foundry world; there's no automated test suite for the module |
    | `landing/` | `cd landing && vaults build` |
 

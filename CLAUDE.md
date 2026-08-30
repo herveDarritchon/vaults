@@ -22,7 +22,7 @@ vaults/                      this repo (single git history)
 ├── pnpm-workspace.yaml
 ├── tsconfig.base.json
 ├── release.sh               unified release: bumps + tags + per-subproject publish
-├── cli/                     @wizzlethorpe/vaults — CLI + Cloudflare Pages template
+├── cli/                     @hervedarritchon/vaults — CLI + Cloudflare Pages template
 ├── foundry/                 Foundry VTT module (id "vaults")
 └── landing/                 Demo vault (deployed at vaults.wizzlethorpe.com)
 ```
@@ -31,7 +31,7 @@ This was previously three submodules pinned by SHA in a parent repo. The submodu
 
 ## Where work happens
 
-- **`cli/`** — ~99% of active development. Build with `pnpm --filter @wizzlethorpe/vaults run build`; test with `pnpm --filter @wizzlethorpe/vaults run test`.
+- **`cli/`** — ~99% of active development. Build with `pnpm --filter @hervedarritchon/vaults run build`; test with `pnpm --filter @hervedarritchon/vaults run test`.
 - **`foundry/`** — Foundry VTT module that pulls per-page rendered HTML via `/_batch`, downloads images via `/_batch-images`, and writes the result into **compendium packs** (never directly into world documents, so a sync can always overwrite its own output). Folder-as-JournalEntry model: every directory becomes one entry, every `.md` file becomes an embedded JournalEntryPage.
 
   The vault's `foundry.package` setting picks the container, and `target.mjs` is the one interface both shapes are written through:
@@ -144,7 +144,7 @@ So a change to `sync.mjs` / `instance.mjs` / `links.mjs` / `media.mjs` reaches a
 running world only after:
 
 ```bash
-pnpm --filter @wizzlethorpe/vaults run build   # re-bundles foundry/scripts
+pnpm --filter @hervedarritchon/vaults run build   # re-bundles foundry/scripts
 vaults push <vault>                            # ships the new _foundry/importer.js
 ```
 

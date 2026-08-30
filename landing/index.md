@@ -62,7 +62,7 @@ See [[Features/Foundry integration]] for more details on how the sync works and 
 ## Set up your own vault
 
 ```bash
-npm install -g @wizzlethorpe/vaults
+npm install -g @hervedarritchon/vaults
 cd path/to/your/obsidian-vault
 vaults init
 vaults preview        # local preview at http://localhost:8788
