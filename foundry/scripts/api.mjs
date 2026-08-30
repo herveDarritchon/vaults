@@ -53,11 +53,6 @@ const BATCH_CONCURRENCY = 4;
 // origin server would tolerate so we stay under Cloudflare's per-IP burst cap.
 const DIRECT_CONCURRENCY = 8;
 
-console.log("[Vaults DEBUG]  global configuration", {
-  batchSize: BATCH_SIZE,
-  configuredBatchConcurrency: BATCH_CONCURRENCY,
-  configuredDirectConcurrency: DIRECT_CONCURRENCY,
-});
 /**
  * Bulk-fetch source paths. For protected vaults this hits /_batch (one POST
  * per chunk); for public vaults it falls back to direct GETs of each file
@@ -82,24 +77,14 @@ export function batchEndpoint(vault, role) {
 }
 
 export async function fetchSourceBatch(vault, paths, role) {
-  console.warn("[Vaults DEBUG] ENTER fetchSourceBatch", {
-    pathsLength: paths?.length,
-    vaultPublic: vault?.public,
-    role,
-    vaultUrl: vault?.url,
-  });
 
   if (paths.length === 0) {
-    console.warn("[Vaults DEBUG] EXIT paths.length === 0");
     return new Map();
   }
 
   if (vault.public) {
-    console.warn("[Vaults DEBUG] EXIT vault.public => fetchSourceDirect");
     return fetchSourceDirect(vault, paths);
   }
-
-  console.warn("[Vaults DEBUG] USING /_batch");
 
   // `role` asks for a specific rendering. A page is fetched in the variant
   // matching its *own* role, not the syncing user's: a page marked readable by
@@ -118,13 +103,6 @@ export async function fetchSourceBatch(vault, paths, role) {
   for (let i = 0; i < paths.length; i += BATCH_SIZE) {
     chunks.push(paths.slice(i, i + BATCH_SIZE));
   }
-
-  console.warn("[Vaults DEBUG] batch config", {
-    paths: paths.length,
-    chunks: chunks.length,
-    chunkSizes: chunks.map(c => c.length),
-    endpoint: endpoint.toString(),
-  });
 
   const out = new Map();
   let next = 0;
