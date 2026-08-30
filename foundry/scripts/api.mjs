@@ -46,13 +46,18 @@ export async function fetchTextOrNull(vault, path) {
   }
 }
 
-const BATCH_SIZE = 100;
+const BATCH_SIZE = 10;
 const BATCH_CONCURRENCY = 4;
 // Per-file concurrency for the public-vault direct-GET fallback. Higher than
 // BATCH_CONCURRENCY because each request is much smaller; lower than what the
 // origin server would tolerate so we stay under Cloudflare's per-IP burst cap.
 const DIRECT_CONCURRENCY = 8;
 
+console.log("[Vaults DEBUG]  global configuration", {
+  batchSize: BATCH_SIZE,
+  configuredBatchConcurrency: BATCH_CONCURRENCY,
+  configuredDirectConcurrency: DIRECT_CONCURRENCY,
+});
 /**
  * Bulk-fetch source paths. For protected vaults this hits /_batch (one POST
  * per chunk); for public vaults it falls back to direct GETs of each file
@@ -77,8 +82,24 @@ export function batchEndpoint(vault, role) {
 }
 
 export async function fetchSourceBatch(vault, paths, role) {
-  if (paths.length === 0) return new Map();
-  if (vault.public) return fetchSourceDirect(vault, paths);
+  console.warn("[Vaults DEBUG] ENTER fetchSourceBatch", {
+    pathsLength: paths?.length,
+    vaultPublic: vault?.public,
+    role,
+    vaultUrl: vault?.url,
+  });
+
+  if (paths.length === 0) {
+    console.warn("[Vaults DEBUG] EXIT paths.length === 0");
+    return new Map();
+  }
+
+  if (vault.public) {
+    console.warn("[Vaults DEBUG] EXIT vault.public => fetchSourceDirect");
+    return fetchSourceDirect(vault, paths);
+  }
+
+  console.warn("[Vaults DEBUG] USING /_batch");
 
   // `role` asks for a specific rendering. A page is fetched in the variant
   // matching its *own* role, not the syncing user's: a page marked readable by
@@ -89,9 +110,21 @@ export async function fetchSourceBatch(vault, paths, role) {
   // *token's* value. The token then failed to verify and the request fell back
   // to the lowest role, while `role` was never a parameter at all — so every
   // page above that tier came back missing and nothing reported an error.
+
   const endpoint = batchEndpoint(vault, role);
+
   const chunks = [];
-  for (let i = 0; i < paths.length; i += BATCH_SIZE) chunks.push(paths.slice(i, i + BATCH_SIZE));
+
+  for (let i = 0; i < paths.length; i += BATCH_SIZE) {
+    chunks.push(paths.slice(i, i + BATCH_SIZE));
+  }
+
+  console.warn("[Vaults DEBUG] batch config", {
+    paths: paths.length,
+    chunks: chunks.length,
+    chunkSizes: chunks.map(c => c.length),
+    endpoint: endpoint.toString(),
+  });
 
   const out = new Map();
   let next = 0;
