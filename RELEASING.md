@@ -1,7 +1,7 @@
 # Releasing Vaults
 
 How to cut a release for the `@wizzlethorpe/vaults` CLI and the Vaults Foundry
-module. Both ship under a **single shared version** (`v0.14.0`, `v0.15.0`, …)
+module. Both ship under a **single shared version** (`v0.1.0`, `v0.2.0`, …)
 so a `vX.Y.Z` tag pins the exact behavior of CLI + Foundry together.
 
 The landing site (a vault content directory) is **not** version-coupled. It
