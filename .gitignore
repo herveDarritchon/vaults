@@ -1,17 +1,46 @@
-# Generic
-node_modules/
+# ── OS / editor ────────────────────────────────────────────────
 .DS_Store
-*.log
-.env
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.code-workspace
 
-# CLI build artifacts
+# ── Node / pnpm ────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+*.tmp
+*.tsbuildinfo
+pnpm-debug.log*
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── CLI build artifacts (TypeScript → dist/) ───────────────────
 cli/dist/
 cli/*.tsbuildinfo
 
-# Wrangler / Cloudflare local state
+# ── Wrangler / Cloudflare local state ──────────────────────────
 .wrangler/
+wrangler.toml.local
+wrangler.jsonc.local
 
-# Per-vault internal state (vaults-cli writes config + cache here)
+# ── Secrets / env ──────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+foundry/.env
+
+# ── Foundry module local artifacts ─────────────────────────────
+foundry/module.zip
+foundry/module.json.tmp
+foundry/*.log
+
+# ── Per-vault internal state (vaults-cli writes config + cache) ─
 **/.vaults/cache/
 **/.vaults/config.json
 .vault-cache/
