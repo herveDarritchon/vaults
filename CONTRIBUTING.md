@@ -60,7 +60,7 @@ Brief and descriptive. The first line is the summary; if you need more detail, l
 
 ## Releases
 
-Releases are cut from the monorepo root via `release.sh <X.Y.Z>`, which bumps `cli/package.json` and `foundry/module.json` to the same version, tags, and runs each subproject's release pipeline (npm publish + Foundry GitHub release + CDN upload). Don't bump version numbers in PRs; the maintainer handles that at release time.
+Releases are cut from the monorepo root via `release.sh <X.Y.Z>`, which bumps `cli/package.json` and `foundry/module.json` to the same version, tags, and runs each subproject's release pipeline (npm publish + Foundry GitHub release + CDN upload). Full walkthrough, prerequisites, and credentials live in [RELEASING.md](./RELEASING.md). Don't bump version numbers in PRs; the maintainer handles that at release time.
 
 ## Questions?
 
